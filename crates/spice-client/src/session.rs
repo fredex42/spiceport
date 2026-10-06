@@ -14,6 +14,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
 use crate::channel::Channel;
+use crate::display_ch::DisplayChannel;
 use crate::error::{ClientError, Result};
 use crate::events::{ClientCommand, ClientEvent, EventSink};
 use crate::main_ch::{MainChannel, MainCmd};
@@ -227,7 +228,25 @@ pub async fn run(
     result
 }
 
-fn spawn_channel(_shared: &Arc<Shared>, _set: &mut JoinSet<(u8, u8, Result<()>)>, c: ChannelId) {
-    let name = channel_type::name(c.channel_type);
-    info!("{name}-{}: channel type not supported yet; ignoring", c.id);
+fn spawn_channel(shared: &Arc<Shared>, set: &mut JoinSet<(u8, u8, Result<()>)>, c: ChannelId) {
+    let (ty, id) = (c.channel_type, c.id);
+    let name = channel_type::name(ty);
+    let shared = shared.clone();
+    match ty {
+        channel_type::DISPLAY => {
+            set.spawn(async move {
+                let r = async {
+                    let ch = Channel::open(&shared, ty, id, DisplayChannel::caps()).await?;
+                    shared.emit(ClientEvent::ChannelUp {
+                        channel_type: ty,
+                        id,
+                    });
+                    DisplayChannel::new(ch).run().await
+                }
+                .await;
+                (ty, id, r)
+            });
+        }
+        _ => info!("{name}-{id}: channel type not supported yet; ignoring"),
+    }
 }

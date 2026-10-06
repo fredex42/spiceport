@@ -2,6 +2,7 @@
 //! hand from spice-common `spice.proto` for the subset spiceport uses.
 
 pub mod base;
+pub mod display;
 pub mod main;
 
 use bytes::BytesMut;

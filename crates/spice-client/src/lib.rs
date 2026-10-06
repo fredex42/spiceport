@@ -4,6 +4,7 @@
 //! [`ClientEvent`]s and takes [`ClientCommand`]s from the frontend.
 
 pub mod channel;
+mod display_ch;
 pub mod error;
 pub mod events;
 pub mod link;
@@ -14,7 +15,7 @@ pub mod transport;
 pub mod uri;
 
 pub use error::{ClientError, Result};
-pub use events::{ClientCommand, ClientEvent, EventSink, MouseMode};
+pub use events::{ClientCommand, ClientEvent, EventSink, MouseMode, SharedSurface, SurfaceData};
 pub use session::{SessionConfig, TlsOptions, run};
 pub use uri::{SpiceUri, UriError};
 

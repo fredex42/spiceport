@@ -2,6 +2,8 @@
 //! asks of the client ([`ClientCommand`]). These replace spice-gtk's GObject
 //! signals and properties.
 
+pub use spice_canvas::{SharedSurface, SurfaceData};
+
 /// `SpiceMouseMode`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MouseMode {
@@ -38,6 +40,35 @@ pub enum ClientEvent {
     },
     MouseMode(MouseMode),
     AgentConnected(bool),
+    /// A display's primary surface was created (or replaced). The frontend
+    /// keeps the handle and reads pixels from it on `Invalidate`.
+    DisplayPrimary {
+        display: u8,
+        surface: SharedSurface,
+        width: u32,
+        height: u32,
+    },
+    /// The display's primary surface went away.
+    DisplayPrimaryDestroyed {
+        display: u8,
+    },
+    /// Pixels of the primary surface changed; the dirty area is in the
+    /// surface. Further draws send no new event until the frontend clears
+    /// `notify_pending` while uploading.
+    Invalidate {
+        display: u8,
+    },
+    /// `SPICE_MSG_DISPLAY_MARK` / `RESET`: whether the display has content.
+    DisplayMark {
+        display: u8,
+        mark: bool,
+    },
+    /// `SPICE_MSG_DISPLAY_MONITORS_CONFIG`
+    MonitorsConfig {
+        display: u8,
+        max_allowed: u16,
+        heads: Vec<spice_proto::msg::display::Head>,
+    },
 }
 
 #[derive(Debug, Clone)]

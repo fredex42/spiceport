@@ -12,6 +12,8 @@ opus = []
 
 [dependencies]
 spice-proto.workspace = true
+spice-canvas.workspace = true
+spice-decode.workspace = true
 log.workspace = true
 thiserror.workspace = true
 bytes.workspace = true
