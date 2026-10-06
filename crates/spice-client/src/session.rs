@@ -187,7 +187,6 @@ pub async fn run(
     let (main_tx, main_rx) = mpsc::unbounded_channel::<MainCmd>();
     let mut main_task = tokio::spawn(MainChannel::new(main, sess_tx, main_rx).run());
     let mut channels: JoinSet<(u8, u8, Result<()>)> = JoinSet::new();
-    let _ = &main_tx;
     let mut inputs_tx: Option<mpsc::UnboundedSender<InputCmd>> = None;
 
     let result = loop {
@@ -207,6 +206,12 @@ pub async fn run(
                     if let Some(tx) = &inputs_tx {
                         let _ = tx.send(i);
                     }
+                }
+                Some(ClientCommand::DisplaySize { display, width, height }) => {
+                    let _ = main_tx.send(MainCmd::DisplaySize { display, width, height });
+                }
+                Some(ClientCommand::ClipboardText(t)) => {
+                    let _ = main_tx.send(MainCmd::ClipboardText(t));
                 }
             },
             Some(m) = sess_rx.recv() => match m {

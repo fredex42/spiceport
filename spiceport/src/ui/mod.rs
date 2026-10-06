@@ -78,6 +78,12 @@ struct App<'tc> {
     focused: bool,
     out: Vec<ClientCommand>,
     redraw: bool,
+    clipboard: sdl3::clipboard::ClipboardUtil,
+    /// Text we put on the clipboard from the guest, so the resulting
+    /// clipboard-update event isn't echoed back.
+    clipboard_from_guest: Option<String>,
+    agent_connected: bool,
+    have_primary: bool,
 }
 
 pub fn run(cfg: SessionConfig, opts: UiOptions) -> anyhow::Result<()> {
@@ -123,6 +129,10 @@ pub fn run(cfg: SessionConfig, opts: UiOptions) -> anyhow::Result<()> {
         focused: false,
         out: Vec::new(),
         redraw: true,
+        clipboard: video.clipboard(),
+        clipboard_from_guest: None,
+        agent_connected: false,
+        have_primary: false,
     };
     app.win.set_release_hint(&app.input.release_hint());
 
@@ -238,6 +248,7 @@ impl<'tc> App<'tc> {
                     return Ok(());
                 }
                 self.display_tex = Some(self.win.set_primary(self.tc, surface, width, height)?);
+                self.have_primary = true;
                 self.redraw = true;
             }
             ClientEvent::DisplayPrimaryDestroyed { display: 0 } => {
@@ -281,6 +292,20 @@ impl<'tc> App<'tc> {
                 self.cursor.shape = None;
                 self.cursor_tex = None;
                 self.cursor.apply(&self.mouse, self.input.mouse_mode);
+            }
+            ClientEvent::AgentConnected(c) => {
+                self.agent_connected = c;
+                if c {
+                    // Offer whatever the client clipboard holds already.
+                    self.clipboard_changed();
+                    self.send_display_size();
+                }
+            }
+            ClientEvent::ClipboardText(t) => {
+                if let Err(e) = self.clipboard.set_clipboard_text(&t) {
+                    warn!("setting the clipboard failed: {e}");
+                }
+                self.clipboard_from_guest = Some(t);
             }
             ClientEvent::KeyModifiers(locks) => {
                 self.input.guest_locks_changed(locks);
@@ -327,9 +352,12 @@ impl<'tc> App<'tc> {
                         self.set_keyboard_grab(true);
                     }
                 }
+                WindowEvent::PixelSizeChanged(..) => {
+                    self.send_display_size();
+                    self.redraw = true;
+                }
                 WindowEvent::Exposed
                 | WindowEvent::Resized(..)
-                | WindowEvent::PixelSizeChanged(..)
                 | WindowEvent::Shown
                 | WindowEvent::Restored => self.redraw = true,
                 _ => {}
@@ -380,6 +408,7 @@ impl<'tc> App<'tc> {
                 };
                 self.input.wheel(y, &mut self.out);
             }
+            Event::ClipboardUpdate { .. } => self.clipboard_changed(),
             Event::RenderTargetsReset { .. } | Event::RenderDeviceReset { .. } => {
                 // Textures may be lost: re-upload everything.
                 if let Some(t) = self.display_tex.as_mut() {
@@ -391,6 +420,36 @@ impl<'tc> App<'tc> {
             }
             _ => {}
         }
+    }
+
+    /// Tell the guest (through the agent) how big the window is, so it can
+    /// resize its display to fit (`recalc_geometry` in spice-widget.c).
+    fn send_display_size(&mut self) {
+        // Before the first primary surface the window has a placeholder
+        // size that mustn't shrink the guest.
+        if !self.have_primary || !self.agent_connected {
+            return;
+        }
+        let (w, h) = self.win.window().size_in_pixels();
+        self.out.push(ClientCommand::DisplaySize {
+            display: 0,
+            width: w,
+            height: h,
+        });
+    }
+
+    fn clipboard_changed(&mut self) {
+        if !self.clipboard.has_clipboard_text() {
+            return;
+        }
+        let Ok(t) = self.clipboard.clipboard_text() else {
+            return;
+        };
+        if self.clipboard_from_guest.as_deref() == Some(t.as_str()) {
+            return;
+        }
+        self.clipboard_from_guest = None;
+        self.out.push(ClientCommand::ClipboardText(t));
     }
 
     fn actions(&mut self, act: input::Actions) {

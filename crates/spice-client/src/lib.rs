@@ -13,6 +13,7 @@ mod inputs_ch;
 pub mod link;
 mod main_ch;
 pub mod session;
+mod text;
 mod tls;
 pub mod transport;
 pub mod uri;

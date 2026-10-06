@@ -84,6 +84,8 @@ pub enum ClientEvent {
     CursorReset,
     /// The guest's lock-key state (`SpiceKeyboardModifierFlags`).
     KeyModifiers(u16),
+    /// The guest copied text; put it on the client clipboard.
+    ClipboardText(String),
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +94,15 @@ pub enum ClientCommand {
     Quit,
     /// Keyboard and mouse input for the inputs channel.
     Input(InputCmd),
+    /// The window for `display` is now this many pixels; with the agent,
+    /// the guest is asked to match (debounced by a second).
+    DisplaySize {
+        display: u8,
+        width: u32,
+        height: u32,
+    },
+    /// The client clipboard now holds this text.
+    ClipboardText(String),
 }
 
 /// Receives client events. Called from tokio worker threads, so it must not
