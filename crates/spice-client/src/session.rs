@@ -157,7 +157,7 @@ pub(crate) enum SessionMsg {
 pub async fn run(
     config: SessionConfig,
     events: Arc<dyn EventSink>,
-    mut commands: mpsc::UnboundedReceiver<ClientCommand>,
+    commands: &mut mpsc::UnboundedReceiver<ClientCommand>,
 ) -> Result<()> {
     if config.uri.unix_path.is_some() && cfg!(not(unix)) {
         return Err(ClientError::Config(

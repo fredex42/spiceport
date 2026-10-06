@@ -45,14 +45,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => {}
     });
     let rt = tokio::runtime::Runtime::new()?;
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     rt.block_on(async {
         let quit = tx.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs_f64(secs)).await;
             let _ = quit.send(ClientCommand::Quit);
         });
-        spice_client::run(cfg, sink, rx).await
+        spice_client::run(cfg, sink, &mut rx).await
     })?;
 
     let guard = primary.lock().unwrap();
