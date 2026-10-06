@@ -25,7 +25,9 @@ pub fn decode(data: &[u8]) -> Result<Image> {
     let out_cs = d.output_colorspace().unwrap_or(ColorSpace::RGB);
     let data = match out_cs.num_components() {
         3 if rgb.len() >= px * 3 => rgb
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .take(px)
             .map(|c| (c[0] as u32) << 16 | (c[1] as u32) << 8 | c[2] as u32)
             .collect(),

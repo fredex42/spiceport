@@ -257,23 +257,21 @@ impl DisplayChannel {
             "create {}surface {id}: {width}x{height} format {format}",
             if primary { "primary " } else { "" }
         );
-        if primary {
-            if let Some((pid, s)) = &self.primary {
-                let same = {
-                    let s = s.lock().unwrap();
-                    s.width == width && s.height == height
-                };
-                if same && *pid == id {
-                    chan_log!(debug, self, "reusing existing primary surface");
-                    return;
-                }
-                let pid = *pid;
-                self.canvas.destroy_surface(pid);
-                self.primary = None;
-                self.ch.session.emit(ClientEvent::DisplayPrimaryDestroyed {
-                    display: self.display(),
-                });
+        if primary && let Some((pid, s)) = &self.primary {
+            let same = {
+                let s = s.lock().unwrap();
+                s.width == width && s.height == height
+            };
+            if same && *pid == id {
+                chan_log!(debug, self, "reusing existing primary surface");
+                return;
             }
+            let pid = *pid;
+            self.canvas.destroy_surface(pid);
+            self.primary = None;
+            self.ch.session.emit(ClientEvent::DisplayPrimaryDestroyed {
+                display: self.display(),
+            });
         }
         match self.canvas.create_surface(id, width, height, format) {
             Ok(s) => {

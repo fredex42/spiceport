@@ -184,8 +184,10 @@ impl Palette {
         Ok(Self {
             unique,
             ents: raw
-                .chunks_exact(4)
-                .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| u32::from_le_bytes(*c))
                 .collect(),
         })
     }
@@ -645,7 +647,9 @@ fn decode_path(r: &mut Reader<'_>) -> Result<Vec<PathSeg>> {
         let count = s.u32()?;
         let raw = s.array_bytes(count as usize, 8)?;
         let points = raw
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .iter()
             .map(|c| PointFix {
                 x: i32::from_le_bytes(c[0..4].try_into().unwrap()),
                 y: i32::from_le_bytes(c[4..8].try_into().unwrap()),

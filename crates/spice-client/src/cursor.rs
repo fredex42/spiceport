@@ -55,14 +55,14 @@ pub fn convert(hdr: &CursorHeader, data: &[u8]) -> Result<CursorShape, CursorErr
         cursor_type::MONO => mono(w, h, data, &mut px)?,
         cursor_type::ALPHA => {
             let d = data.get(..n * 4).ok_or(CursorError::Truncated)?;
-            for (p, c) in px.iter_mut().zip(d.chunks_exact(4)) {
+            for (p, c) in px.iter_mut().zip(d.as_chunks::<4>().0.iter()) {
                 *p = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
             }
         }
         cursor_type::COLOR32 => {
             let size = n * 4;
             let d = data.get(..size).ok_or(CursorError::Truncated)?;
-            for (i, (p, c)) in px.iter_mut().zip(d.chunks_exact(4)).enumerate() {
+            for (i, (p, c)) in px.iter_mut().zip(d.as_chunks::<4>().0.iter()).enumerate() {
                 let v = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
                 let m = mask_bit(data, size, i)?;
                 *p = if m && v == 0xffffff {
@@ -75,7 +75,7 @@ pub fn convert(hdr: &CursorHeader, data: &[u8]) -> Result<CursorShape, CursorErr
         cursor_type::COLOR16 => {
             let size = n * 2;
             let d = data.get(..size).ok_or(CursorError::Truncated)?;
-            for (i, (p, c)) in px.iter_mut().zip(d.chunks_exact(2)).enumerate() {
+            for (i, (p, c)) in px.iter_mut().zip(d.as_chunks::<2>().0.iter()).enumerate() {
                 let v = u16::from_le_bytes([c[0], c[1]]) as u32;
                 let m = mask_bit(data, size, i)?;
                 *p = if m && v == 0x7fff {
@@ -92,7 +92,9 @@ pub fn convert(hdr: &CursorHeader, data: &[u8]) -> Result<CursorShape, CursorErr
             let size = w.div_ceil(2) * h;
             let pal_bytes = data.get(size..size + 64).ok_or(CursorError::Truncated)?;
             let pal: Vec<u32> = pal_bytes
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                 .collect();
             for (i, p) in px.iter_mut().enumerate() {

@@ -306,7 +306,7 @@ impl Header {
 pub(crate) fn check_sizes(ty: LzType, width: u32, height: u32, stride: u32) -> Result<()> {
     if ty.is_plt() {
         let ppb = ty.plt_pixels_per_byte();
-        if stride > width / ppb && (width % ppb == 0 || stride - width / ppb > 1) {
+        if stride > width / ppb && (width.is_multiple_of(ppb) || stride - width / ppb > 1) {
             return Err(DecodeError::Corrupt("LZ (palette stride)"));
         }
     } else if stride as u64 != width as u64 * ty.rgb_bytes_per_pixel() as u64 {

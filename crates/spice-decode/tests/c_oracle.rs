@@ -72,7 +72,7 @@ fn pattern(kind: u32, w: u32, h: u32, rng: &mut Rng) -> Vec<u32> {
                     }
                 }
                 _ => {
-                    if rng.next() % 4 == 0 {
+                    if rng.next().is_multiple_of(4) {
                         rng.next()
                     } else {
                         0x0080_8080 + (y << 8)

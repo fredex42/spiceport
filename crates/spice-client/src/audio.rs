@@ -95,7 +95,9 @@ impl OpusEncoder {
     /// Encode exactly one frame (`OPUS_FRAME_SIZE` stereo samples).
     pub fn encode(&mut self, frame: &[u8], out: &mut Vec<u8>) -> Result<(), String> {
         let pcm: Vec<i16> = frame
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|b| i16::from_le_bytes([b[0], b[1]]))
             .collect();
         out.resize(OPUS_MAX_COMPRESSED, 0);
@@ -130,7 +132,9 @@ mod tests {
         }
         assert_eq!(pcm.len(), frame.len());
         let energy: f64 = pcm
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|b| i16::from_le_bytes([b[0], b[1]]) as f64)
             .map(|s| s * s)
             .sum();

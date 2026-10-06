@@ -66,18 +66,18 @@ pub fn decode(data: &[u8], width: u32, height: u32) -> Result<Image> {
         let dst = &mut img.data[dy * w..(dy + 1) * w];
         match bpp {
             2 => {
-                for (o, s) in dst.iter_mut().zip(src.chunks_exact(2)) {
+                for (o, s) in dst.iter_mut().zip(src.as_chunks::<2>().0.iter()) {
                     *o = rgb555_to_xrgb(u16::from_le_bytes([s[0], s[1]]) as u32);
                 }
             }
             3 => {
                 // PIXMAN_LE_r8g8b8: bytes are b, g, r
-                for (o, s) in dst.iter_mut().zip(src.chunks_exact(3)) {
+                for (o, s) in dst.iter_mut().zip(src.as_chunks::<3>().0.iter()) {
                     *o = (s[2] as u32) << 16 | (s[1] as u32) << 8 | s[0] as u32;
                 }
             }
             _ => {
-                for (o, s) in dst.iter_mut().zip(src.chunks_exact(4)) {
+                for (o, s) in dst.iter_mut().zip(src.as_chunks::<4>().0.iter()) {
                     *o = u32::from_le_bytes([s[0], s[1], s[2], s[3]]);
                 }
             }

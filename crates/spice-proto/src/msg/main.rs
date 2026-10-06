@@ -55,7 +55,9 @@ impl ChannelsList {
         let raw = r.array_bytes(n as usize, 2)?;
         Ok(Self {
             channels: raw
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|c| ChannelId {
                     channel_type: c[0],
                     id: c[1],

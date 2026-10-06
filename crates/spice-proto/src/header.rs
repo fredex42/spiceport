@@ -108,8 +108,10 @@ fn read_caps(r: &Reader<'_>, off: u32, ncommon: u32, nchannel: u32) -> Result<(C
     let mut words = |n: u32| -> Result<Caps> {
         let raw = c.array_bytes(n as usize, 4)?;
         Ok(Caps::from_words(
-            raw.chunks_exact(4)
-                .map(|w| u32::from_le_bytes(w.try_into().unwrap()))
+            raw.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|w| u32::from_le_bytes(*w))
                 .collect(),
         ))
     };

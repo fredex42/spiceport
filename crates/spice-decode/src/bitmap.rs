@@ -93,18 +93,18 @@ pub fn decode(
         let dst = &mut img.data[y * w..(y + 1) * w];
         match fmt {
             FMT_32BIT | FMT_RGBA => {
-                for (d, s) in dst.iter_mut().zip(src.chunks_exact(4)) {
+                for (d, s) in dst.iter_mut().zip(src.as_chunks::<4>().0.iter()) {
                     *d = u32::from_le_bytes([s[0], s[1], s[2], s[3]]);
                 }
             }
             FMT_24BIT => {
-                for (d, s) in dst.iter_mut().zip(src.chunks_exact(3)) {
+                for (d, s) in dst.iter_mut().zip(src.as_chunks::<3>().0.iter()) {
                     // bgr byte order
                     *d = (s[2] as u32) << 16 | (s[1] as u32) << 8 | s[0] as u32;
                 }
             }
             FMT_16BIT => {
-                for (d, s) in dst.iter_mut().zip(src.chunks_exact(2)) {
+                for (d, s) in dst.iter_mut().zip(src.as_chunks::<2>().0.iter()) {
                     *d = rgb555_to_xrgb(u16::from_le_bytes([s[0], s[1]]) as u32);
                 }
             }
