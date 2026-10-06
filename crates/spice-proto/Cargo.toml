@@ -9,3 +9,7 @@ rust-version.workspace = true
 [dependencies]
 log.workspace = true
 thiserror.workspace = true
+bytes.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
