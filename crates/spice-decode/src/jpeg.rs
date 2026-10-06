@@ -8,9 +8,44 @@ use zune_jpeg::zune_core::options::DecoderOptions;
 
 use crate::image::{DecodeError, Format, Image, Result};
 
+/// Whether the JPEG has a DHT (Huffman table) segment before its first scan.
+fn has_huffman_tables(data: &[u8]) -> bool {
+    let mut i = 2;
+    while i + 4 <= data.len() {
+        if data[i] != 0xff {
+            return false;
+        }
+        let marker = data[i + 1];
+        match marker {
+            0xc4 => return true,
+            0xda | 0xd9 => return false, // SOS / EOI
+            0xd0..=0xd7 | 0x01 | 0xff => i += 2,
+            _ => i += 2 + u16::from_be_bytes([data[i + 2], data[i + 3]]) as usize,
+        }
+    }
+    false
+}
+
+/// MJPEG frames (and spice-server's) may leave out the Huffman tables and
+/// rely on the standard ones from JPEG Annex K, which libjpeg fills in.
+/// zune-jpeg does too, but only when it sees an "AVI1" APP0 segment, so
+/// insert one when the frame has no tables of its own.
+fn with_mjpeg_marker(data: &[u8]) -> Option<Vec<u8>> {
+    if data.len() < 4 || data[0] != 0xff || data[1] != 0xd8 || has_huffman_tables(data) {
+        return None;
+    }
+    let mut v = Vec::with_capacity(data.len() + 9);
+    v.extend_from_slice(&data[..2]);
+    v.extend_from_slice(&[0xff, 0xe0, 0x00, 0x07, b'A', b'V', b'I', b'1', 0]);
+    v.extend_from_slice(&data[2..]);
+    Some(v)
+}
+
 /// Decode a JPEG to xRGB. Returns the image at its own size; callers check
 /// it against the descriptor.
 pub fn decode(data: &[u8]) -> Result<Image> {
+    let patched = with_mjpeg_marker(data);
+    let data = patched.as_deref().unwrap_or(data);
     let opts = DecoderOptions::default()
         .jpeg_set_out_colorspace(ColorSpace::RGB)
         .set_max_width(16384)
@@ -75,6 +110,35 @@ pub(crate) mod tests {
         let blue = img.data[13];
         assert!((red >> 16) & 0xff > 200 && red & 0xff < 50, "{red:06x}");
         assert!(blue & 0xff > 200 && (blue >> 16) & 0xff < 50, "{blue:06x}");
+    }
+
+    /// Strip the DHT segments from a JPEG, as spice-server's MJPEG frames
+    /// come: decoding must fall back to the standard tables.
+    #[test]
+    fn decodes_without_huffman_tables() {
+        let (w, h) = (16u16, 16u16);
+        let rgb: Vec<u8> = (0..w as usize * h as usize)
+            .flat_map(|i| [(i * 7) as u8, 128, 30])
+            .collect();
+        let full = encode_rgb(w, h, &rgb);
+        assert!(has_huffman_tables(&full));
+        let mut stripped = full[..2].to_vec();
+        let mut i = 2;
+        while i < full.len() {
+            let marker = full[i + 1];
+            if marker == 0xda {
+                stripped.extend_from_slice(&full[i..]);
+                break;
+            }
+            let len = u16::from_be_bytes([full[i + 2], full[i + 3]]) as usize;
+            if marker != 0xc4 {
+                stripped.extend_from_slice(&full[i..i + 2 + len]);
+            }
+            i += 2 + len;
+        }
+        assert!(!has_huffman_tables(&stripped));
+        // jpeg-encoder uses the standard tables, so the result must match.
+        assert_eq!(decode(&stripped).unwrap(), decode(&full).unwrap());
     }
 
     #[test]

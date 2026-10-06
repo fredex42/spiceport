@@ -179,7 +179,7 @@ impl RecordChannel {
             self.started = true;
         }
         self.pending.extend_from_slice(data);
-        let mut out = Vec::new();
+        let mut out: Vec<u8> = Vec::new();
         while self.pending.len() >= self.frame_bytes {
             let frame: Vec<u8> = self.pending.drain(..self.frame_bytes).collect();
             let payload: &[u8] = match self.mode {

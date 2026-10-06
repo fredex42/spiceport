@@ -1,7 +1,8 @@
 #!/bin/sh
 # Start a QEMU VM with a SPICE server for testing spiceport.
 #
-#   scripts/test-server.sh [--password PW] [--port N] [--tls-port N --tls-dir DIR] [-- extra qemu args]
+#   scripts/test-server.sh [--password PW] [--port N] [--tls-port N --tls-dir DIR]
+#                          [--streaming off|all|filter] [-- extra qemu args]
 #
 # With no disk the guest shows SeaBIOS and then "No bootable device", which
 # is enough to exercise the display channel. Pass e.g. `-- -cdrom some.iso`
@@ -12,12 +13,15 @@ PORT=5900
 PASSWORD=
 TLS_PORT=
 TLS_DIR=
+STREAMING=
 while [ $# -gt 0 ]; do
     case "$1" in
         --password) PASSWORD=$2; shift 2 ;;
         --port) PORT=$2; shift 2 ;;
         --tls-port) TLS_PORT=$2; shift 2 ;;
         --tls-dir) TLS_DIR=$2; shift 2 ;;
+        # QEMU's video detection defaults to off; MJPEG streams need it.
+        --streaming) STREAMING=$2; shift 2 ;;
         --) shift; break ;;
         *) echo "unknown option $1" >&2; exit 2 ;;
     esac
@@ -30,6 +34,9 @@ if [ -n "$PASSWORD" ]; then
     EXTRA="-object secret,id=spicepw,data=$PASSWORD"
 else
     SPICE="$SPICE,disable-ticketing=on"
+fi
+if [ -n "$STREAMING" ]; then
+    SPICE="$SPICE,streaming-video=$STREAMING"
 fi
 if [ -n "$TLS_PORT" ]; then
     # TLS_DIR must hold ca-cert.pem, server-cert.pem and server-key.pem

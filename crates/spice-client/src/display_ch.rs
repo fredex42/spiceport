@@ -1,7 +1,9 @@
 //! The display channel (`channel-display.c`): surfaces, draw operations and
 //! caches, driving `spice-canvas`.
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use log::{info, warn};
 use spice_canvas::{Canvas, CanvasError, SharedSurface};
@@ -13,6 +15,7 @@ use spice_proto::{chan_log, warn_once_per};
 use crate::channel::{Channel, Message};
 use crate::error::Result;
 use crate::events::ClientEvent;
+use crate::video::{self, Frame, Stream};
 
 /// `IMAGES_CACHE_SIZE_DEFAULT` in spice-session.c (bytes).
 const IMAGES_CACHE_SIZE: i64 = 1024 * 1024 * 80;
@@ -25,16 +28,25 @@ pub struct DisplayChannel {
     canvas: Canvas,
     primary: Option<(u32, SharedSurface)>,
     mark: bool,
+    streams: HashMap<u32, Stream>,
 }
 
 impl DisplayChannel {
-    /// `spice_display_channel_set_capabilities`
+    /// `spice_display_channel_set_capabilities`. MJPEG is the only
+    /// video codec for now (H.264 is a later phase).
     pub fn caps() -> Caps {
-        Caps::new()
+        let mut c = Caps::new()
             .with(caps::display::SIZED_STREAM)
             .with(caps::display::MONITORS_CONFIG)
+            .with(caps::display::COMPOSITE)
+            .with(caps::display::A8_SURFACE)
             .with(caps::display::LZ4_COMPRESSION)
             .with(caps::display::MULTI_CODEC)
+            .with(caps::display::CODEC_MJPEG);
+        if std::env::var_os("SPICE_DISABLE_ADAPTIVE_STREAMING").is_none() {
+            c.set(caps::display::STREAM_REPORT);
+        }
+        c
     }
 
     pub fn new(ch: Channel) -> Self {
@@ -46,6 +58,7 @@ impl DisplayChannel {
             canvas,
             primary: None,
             mark: false,
+            streams: HashMap::new(),
         }
     }
 
@@ -73,11 +86,108 @@ impl DisplayChannel {
 
     pub async fn run(mut self) -> Result<()> {
         self.channel_up();
-        while let Some(m) = self.ch.next().await? {
-            self.handle(m).await?;
+        loop {
+            let next_frame = self.next_frame_due();
+            tokio::select! {
+                m = self.ch.next() => match m? {
+                    Some(m) => self.handle(m).await?,
+                    None => return Ok(()),
+                },
+                _ = tokio::time::sleep(next_frame.unwrap_or_default()), if next_frame.is_some() => {
+                    self.show_due_frames();
+                }
+            }
             self.notify_primary();
         }
-        Ok(())
+    }
+
+    // ---- video streams ---------------------------------------------------
+
+    fn next_frame_due(&self) -> Option<Duration> {
+        let now = self.ch.session.mm_time();
+        self.streams
+            .values()
+            .filter_map(|s| s.due_in(now))
+            .min()
+            .map(|ms| Duration::from_millis(ms as u64))
+    }
+
+    /// `mjpeg_decoder_decode_frame` for every stream with a frame due.
+    fn show_due_frames(&mut self) {
+        let now = self.ch.session.mm_time();
+        let ids: Vec<u32> = self.streams.keys().copied().collect();
+        for id in ids {
+            while let Some(frame) = self.streams.get_mut(&id).and_then(|s| s.take_due(now)) {
+                let st = &self.streams[&id];
+                let (surface, flags, clip) = (st.surface_id, st.flags, st.clip.clone());
+                match spice_decode::jpeg::decode(&frame.data) {
+                    Ok(img) => {
+                        let top_down = flags & spice_proto::enums::stream_flags::TOP_DOWN != 0;
+                        if let Err(e) = self.canvas.put_image(
+                            surface,
+                            frame.dest,
+                            &img,
+                            clip.as_ref(),
+                            top_down,
+                        ) {
+                            warn!("{}: stream {id}: {e}", self.name);
+                        }
+                    }
+                    Err(e) => warn!("{}: stream {id}: bad MJPEG frame: {e}", self.name),
+                }
+            }
+        }
+    }
+
+    fn report_invalid_stream(&self, id: u32) {
+        if self.ch.remote_has_cap(caps::display::STREAM_REPORT) {
+            warn!(
+                "{}: telling the server stream {id} doesn't exist",
+                self.name
+            );
+            self.ch.tx.send(&video::invalid_stream_report(id));
+        }
+    }
+
+    /// `display_handle_stream_data`
+    fn stream_data(&mut self, data: d::StreamData<'_>, body: &bytes::Bytes) {
+        let id = data.id;
+        let now = self.ch.session.mm_time();
+        let audio_delay = self.ch.session.playback_delay().unwrap_or(u32::MAX);
+        let Some(st) = self.streams.get_mut(&id) else {
+            self.report_invalid_stream(id);
+            return;
+        };
+        let mut mm = data.multi_media_time;
+        if mm == 0 {
+            warn_once_per!(
+                id,
+                "{}: frame with invalid 0 timestamp; wrong guest driver?",
+                self.name
+            );
+            mm = now.unwrap_or(0).wrapping_add(100);
+        }
+        let margin = now.map_or(0, |n| video::mm_diff(mm, n));
+        let dest = data.sized.map_or(st.dest, |(_, _, r)| r);
+        st.queue_frame(
+            Frame {
+                mm_time: mm,
+                dest,
+                data: body.slice_ref(data.data),
+            },
+            now,
+        );
+        if let Some(report) = st.update_report(id, mm, margin, audio_delay) {
+            chan_log!(
+                debug,
+                self,
+                "stream {id} report: {} frames, {} drops, last delay {}",
+                report.num_frames,
+                report.num_drops,
+                report.last_frame_delay
+            );
+            self.ch.tx.send(&report);
+        }
     }
 
     fn notify_primary(&mut self) {
@@ -201,19 +311,64 @@ impl DisplayChannel {
                     });
                 }
             }
-            msg::display::STREAM_CREATE
-            | msg::display::STREAM_DATA
-            | msg::display::STREAM_DATA_SIZED
-            | msg::display::STREAM_CLIP
-            | msg::display::STREAM_DESTROY
-            | msg::display::STREAM_DESTROY_ALL
-            | msg::display::STREAM_ACTIVATE_REPORT => {
-                warn_once_per!(
-                    m.ty,
-                    "{}: video streams are not supported yet (message {})",
-                    self.name,
-                    m.ty
+            msg::display::STREAM_CREATE => {
+                let c = d::StreamCreate::decode(b)?;
+                chan_log!(
+                    debug,
+                    self,
+                    "stream {} create: codec {}, {}x{} -> {:?}",
+                    c.id,
+                    c.codec_type,
+                    c.src_width,
+                    c.src_height,
+                    c.dest
                 );
+                if c.codec_type != spice_proto::enums::video_codec::MJPEG {
+                    warn!(
+                        "{}: stream codec {} is not supported",
+                        self.name, c.codec_type
+                    );
+                    self.report_invalid_stream(c.id);
+                } else {
+                    if self.streams.contains_key(&c.id) {
+                        warn!("{}: stream {} created twice", self.name, c.id);
+                    }
+                    self.streams
+                        .insert(c.id, Stream::new(c.surface_id, c.flags, c.dest, &c.clip));
+                }
+            }
+            msg::display::STREAM_DATA | msg::display::STREAM_DATA_SIZED => {
+                let data = d::StreamData::decode(b, m.ty == msg::display::STREAM_DATA_SIZED)?;
+                self.stream_data(data, &m.body);
+                // Frames due right now go out without a timer round trip.
+                self.show_due_frames();
+            }
+            msg::display::STREAM_CLIP => {
+                let (id, clip) = d::decode_stream_clip(b)?;
+                match self.streams.get_mut(&id) {
+                    Some(st) => st.clip = video::clip_region(&clip),
+                    None => self.report_invalid_stream(id),
+                }
+            }
+            msg::display::STREAM_DESTROY => {
+                let id = d::decode_stream_destroy(b)?;
+                if let Some(st) = self.streams.remove(&id) {
+                    chan_log!(
+                        debug,
+                        self,
+                        "stream {id} destroyed: {} frames shown, {} dropped",
+                        st.frames_shown,
+                        st.frames_dropped
+                    );
+                }
+            }
+            msg::display::STREAM_DESTROY_ALL => self.streams.clear(),
+            msg::display::STREAM_ACTIVATE_REPORT => {
+                let r = d::StreamActivateReport::decode(b)?;
+                match self.streams.get_mut(&r.stream_id) {
+                    Some(st) => st.activate_report(r.unique_id, r.max_window_size, r.timeout_ms),
+                    None => self.report_invalid_stream(r.stream_id),
+                }
             }
             msg::display::GL_SCANOUT_UNIX
             | msg::display::GL_SCANOUT2_UNIX

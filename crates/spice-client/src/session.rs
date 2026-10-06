@@ -101,6 +101,8 @@ pub struct Shared {
     serials: Mutex<HashMap<(u8, u8), watch::Receiver<u64>>>,
     /// The GLZ dictionary shared by all display channels.
     pub glz_window: Arc<spice_canvas::GlzWindow>,
+    /// Audio playback latency in ms, `u32::MAX` while no playback is active.
+    playback_delay: AtomicU32,
 }
 
 impl Shared {
@@ -138,6 +140,21 @@ impl Shared {
             .unwrap()
             .as_ref()
             .map(|m| m.base.wrapping_add(m.at.elapsed().as_millis() as u32))
+    }
+
+    /// `spice_session_get_playback_latency`, or `None` when no playback
+    /// is active (stream reports then send `UINT32_MAX`).
+    pub fn playback_delay(&self) -> Option<u32> {
+        let d = self.playback_delay.load(Ordering::Relaxed);
+        (d != u32::MAX).then_some(d)
+    }
+
+    pub(crate) fn set_playback_delay(&self, d: Option<u32>) {
+        let v = match d {
+            Some(d) => d.min(u32::MAX - 1),
+            None => u32::MAX,
+        };
+        self.playback_delay.store(v, Ordering::Relaxed);
     }
 
     pub(crate) fn register_serial(&self, ty: u8, id: u8, rx: watch::Receiver<u64>) {
@@ -182,6 +199,7 @@ pub async fn run(
         mm_time: Mutex::new(None),
         serials: Mutex::new(HashMap::new()),
         glz_window: spice_canvas::GlzWindow::new(),
+        playback_delay: AtomicU32::new(u32::MAX),
     });
 
     let main = Channel::open(&shared, channel_type::MAIN, 0, MainChannel::caps()).await?;

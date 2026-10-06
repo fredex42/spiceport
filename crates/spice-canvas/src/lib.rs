@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 mod canvas;
+mod pixops;
 pub mod region;
 pub mod rop;
 mod surface;

@@ -24,6 +24,7 @@ pub struct PlaybackChannel {
     mode: u16,
     #[cfg(feature = "opus")]
     decoder: Option<audio::OpusDecoder>,
+    #[cfg_attr(not(feature = "opus"), allow(dead_code))]
     pcm: Vec<u8>,
     last_time: u32,
     frame_count: u32,
@@ -122,6 +123,7 @@ impl PlaybackChannel {
             msg::playback::STOP => {
                 chan_log!(debug, self, "stop");
                 self.sink = None;
+                self.ch.session.set_playback_delay(None);
             }
             msg::playback::VOLUME => {
                 let v = a::decode_volume(b)?;

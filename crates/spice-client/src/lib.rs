@@ -20,6 +20,7 @@ mod text;
 mod tls;
 pub mod transport;
 pub mod uri;
+mod video;
 
 pub use error::{ClientError, Result};
 pub use events::{
