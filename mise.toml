@@ -1,0 +1,4 @@
+[tools]
+"pypi:meson" = "latest"
+rust = "latest"
+uv = "latest"

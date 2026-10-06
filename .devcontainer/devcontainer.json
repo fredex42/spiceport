@@ -1,0 +1,21 @@
+{
+    "name": "spice-gtk",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "remoteUser": "vscode",
+    "remoteEnv": {
+        "PATH": "/home/vscode/.local/share/mise/shims:${containerEnv:PATH}"
+    },
+    "postCreateCommand": "mise trust && mise install && mise reshim",
+    "customizations": {
+        "vscode": {
+        "extensions": [
+            "1yib.rust-bundle",
+            "fill-labs.dependi",
+            "dbaeumer.vscode-eslint",
+            "anthropic.claude-code"
+        ]
+        }
+    }
+}
