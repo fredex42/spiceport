@@ -96,6 +96,21 @@ pub enum Compression {
     Off,
 }
 
+impl Compression {
+    /// The `SpiceImageCompression` value.
+    pub fn wire(self) -> u8 {
+        match self {
+            Compression::Off => 1,
+            Compression::AutoGlz => 2,
+            Compression::AutoLz => 3,
+            Compression::Quic => 4,
+            Compression::Glz => 5,
+            Compression::Lz => 6,
+            Compression::Lz4 => 7,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -14,6 +14,7 @@ pub mod agent;
 pub mod caps;
 pub mod enums;
 pub mod header;
+pub mod logutil;
 pub mod msg;
 pub mod reader;
 

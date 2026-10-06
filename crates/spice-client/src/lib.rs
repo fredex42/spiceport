@@ -3,6 +3,22 @@
 //! This crate has no UI dependency. It reports what happens through
 //! [`ClientEvent`]s and takes [`ClientCommand`]s from the frontend.
 
+pub mod channel;
+pub mod error;
+pub mod events;
+pub mod link;
+mod main_ch;
+pub mod session;
+mod tls;
+pub mod transport;
 pub mod uri;
 
+pub use error::{ClientError, Result};
+pub use events::{ClientCommand, ClientEvent, EventSink, MouseMode};
+pub use session::{SessionConfig, TlsOptions, run};
 pub use uri::{SpiceUri, UriError};
+
+/// Channel type for a name such as `"display"` (`spice_channel_string_to_type`).
+pub fn channel_type_from_name(name: &str) -> Option<u8> {
+    spice_proto::enums::channel_type::from_name(name)
+}

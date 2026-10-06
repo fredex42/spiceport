@@ -21,4 +21,4 @@ colored = "3"
 env_logger.workspace = true
 sdl3.workspace = true
 rpassword.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"] }
