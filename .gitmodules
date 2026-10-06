@@ -1,0 +1,6 @@
+[submodule "spice-gtk"]
+	path = spice-gtk
+	url = https://gitlab.freedesktop.org/spice/spice-gtk.git
+[submodule "spice-protocol"]
+	path = spice-protocol
+	url = https://gitlab.freedesktop.org/spice/spice-protocol.git
