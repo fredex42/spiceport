@@ -1,0 +1,24 @@
+[package]
+name = "spiceport"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "A cross-platform SPICE remote display client (Rust + SDL3 port of spice-gtk)"
+
+[features]
+default = ["opus"]
+opus = ["spice-client/opus"]
+
+[dependencies]
+spice-client.workspace = true
+log.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+colog.workspace = true
+colored = "3"
+env_logger.workspace = true
+sdl3.workspace = true
+rpassword.workspace = true
+tokio.workspace = true

@@ -1,0 +1,57 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/spice-proto",
+    "crates/spice-decode",
+    "crates/spice-canvas",
+    "crates/spice-client",
+    "spiceport",
+    "xtask",
+]
+# Reference sources only; nothing in the build reads them.
+exclude = ["spice-gtk", "spice-protocol"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "LGPL-2.1-or-later"
+repository = "https://github.com/fredex42/spiceport"
+rust-version = "1.85"
+
+[workspace.dependencies]
+spice-proto = { path = "crates/spice-proto" }
+spice-decode = { path = "crates/spice-decode" }
+spice-canvas = { path = "crates/spice-canvas" }
+spice-client = { path = "crates/spice-client" }
+
+log = "0.4"
+thiserror = "2"
+anyhow = "1"
+bytes = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "logging", "tls12"] }
+rustls-pemfile = "2"
+rustls-native-certs = "0.8"
+x509-parser = "0.18"
+rsa = "0.9"
+sha1 = "0.10"
+rand = "0.8"
+zune-jpeg = "0.5"
+lz4_flex = { version = "0.14", default-features = false, features = ["safe-decode", "std"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+opus = "0.4"
+clap = { version = "4", features = ["derive", "env"] }
+colog = "1.4"
+env_logger = "0.11"
+sdl3 = { version = "0.20", features = ["build-from-source-static"] }
+rpassword = "7"
+proptest = "1"
+
+[profile.dev.package."*"]
+# Decoders are unusably slow unoptimised; keep our own crates debuggable.
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
