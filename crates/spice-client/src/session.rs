@@ -93,6 +93,8 @@ pub struct Shared {
     connection_id: AtomicU32,
     mm_time: Mutex<Option<MmTime>>,
     serials: Mutex<HashMap<(u8, u8), watch::Receiver<u64>>>,
+    /// The GLZ dictionary shared by all display channels.
+    pub glz_window: Arc<spice_canvas::GlzWindow>,
 }
 
 impl Shared {
@@ -173,6 +175,7 @@ pub async fn run(
         connection_id: AtomicU32::new(0),
         mm_time: Mutex::new(None),
         serials: Mutex::new(HashMap::new()),
+        glz_window: spice_canvas::GlzWindow::new(),
     });
 
     let main = Channel::open(&shared, channel_type::MAIN, 0, MainChannel::caps()).await?;

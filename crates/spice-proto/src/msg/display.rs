@@ -546,6 +546,70 @@ pub enum DrawOp<'a> {
 }
 
 impl DrawOp<'_> {
+    /// Every image the op references (sources, brushes, masks).
+    pub fn images(&self) -> Vec<&Image<'_>> {
+        let mut v: Vec<&Image<'_>> = Vec::new();
+        match self {
+            DrawOp::Fill(f) => {
+                if let Brush::Pattern { image, .. } = &f.brush {
+                    v.push(image);
+                }
+                v.extend(f.mask.bitmap.as_ref());
+            }
+            DrawOp::Opaque(o) => {
+                v.extend(o.src_bitmap.as_ref());
+                if let Brush::Pattern { image, .. } = &o.brush {
+                    v.push(image);
+                }
+                v.extend(o.mask.bitmap.as_ref());
+            }
+            DrawOp::Copy(c) | DrawOp::Blend(c) => {
+                v.extend(c.src_bitmap.as_ref());
+                v.extend(c.mask.bitmap.as_ref());
+            }
+            DrawOp::Blackness(m) | DrawOp::Whiteness(m) | DrawOp::Invers(m) => {
+                v.extend(m.bitmap.as_ref())
+            }
+            DrawOp::Rop3(r) => {
+                v.extend(r.src_bitmap.as_ref());
+                if let Brush::Pattern { image, .. } = &r.brush {
+                    v.push(image);
+                }
+                v.extend(r.mask.bitmap.as_ref());
+            }
+            DrawOp::Stroke(s) => {
+                if let Brush::Pattern { image, .. } = &s.brush {
+                    v.push(image);
+                }
+            }
+            DrawOp::Text(t) => {
+                for b in [&t.fore_brush, &t.back_brush] {
+                    if let Brush::Pattern { image, .. } = b {
+                        v.push(image);
+                    }
+                }
+            }
+            DrawOp::Transparent(t) => v.extend(t.src_bitmap.as_ref()),
+            DrawOp::AlphaBlend(a) => v.extend(a.src_bitmap.as_ref()),
+            DrawOp::Composite(c) => {
+                v.push(&c.src_bitmap);
+                v.extend(c.mask_bitmap.as_ref());
+            }
+        }
+        v
+    }
+
+    /// Whether decoding this op may need to wait for another channel's GLZ
+    /// images.
+    pub fn uses_glz(&self) -> bool {
+        self.images().iter().any(|i| {
+            matches!(
+                i.descriptor.ty,
+                image_type::GLZ_RGB | image_type::ZLIB_GLZ_RGB
+            )
+        })
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             DrawOp::Fill(_) => "fill",

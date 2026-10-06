@@ -39,10 +39,11 @@ impl DisplayChannel {
 
     pub fn new(ch: Channel) -> Self {
         let name = ch.name.clone();
+        let canvas = Canvas::new(ch.session.glz_window.clone());
         Self {
             ch,
             name,
-            canvas: Canvas::new(),
+            canvas,
             primary: None,
             mark: false,
         }
@@ -98,7 +99,14 @@ impl DisplayChannel {
             msg::display::DRAW_FILL..=msg::display::DRAW_ALPHA_BLEND
             | msg::display::DRAW_COMPOSITE => {
                 let (base, op) = d::decode_draw(m.ty, b)?;
-                if let Err(e) = self.canvas.draw(&base, &op) {
+                let r = if op.uses_glz() {
+                    // GLZ may wait for an image another display channel is
+                    // still decoding; let tokio move other tasks off this thread.
+                    tokio::task::block_in_place(|| self.canvas.draw(&base, &op))
+                } else {
+                    self.canvas.draw(&base, &op)
+                };
+                if let Err(e) = r {
                     self.draw_error(m.ty, op.name(), e);
                 }
             }

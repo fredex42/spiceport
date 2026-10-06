@@ -4,3 +4,4 @@
 /fuzz/corpus
 /fuzz/artifacts
 /tests/c-oracle/build
+/tests/c-oracle/build

@@ -31,6 +31,8 @@ RUN apt-get update \
         ninja-build \
         python3 \
         python3-venv \
+        # spice-common's log.c needs glib for the C oracle (tests/c-oracle).
+        libglib2.0-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/jdx/mise:latest /usr/local/bin/mise /usr/local/bin/mise

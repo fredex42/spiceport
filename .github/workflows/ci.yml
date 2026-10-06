@@ -18,7 +18,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-        # Submodules are reference material only; the build never reads them.
+        with:
+          # Reference sources: the build never reads them, but the Linux
+          # golden tests compile spice-common's encoders from them.
+          submodules: ${{ runner.os == 'Linux' && 'recursive' || 'false' }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -30,7 +33,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends cmake pkg-config \
             libasound2-dev libdbus-1-dev libegl-dev libgl-dev libpulse-dev libudev-dev \
             libwayland-dev libx11-dev libxcursor-dev libxext-dev libxfixes-dev libxi-dev \
-            libxkbcommon-dev libxrandr-dev libxss-dev libxtst-dev wayland-protocols
+            libxkbcommon-dev libxrandr-dev libxss-dev libxtst-dev wayland-protocols \
+            libglib2.0-dev
       - name: Format
         if: runner.os == 'Linux'
         run: cargo fmt --all --check
@@ -41,6 +45,8 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+        env:
+          SPICEPORT_REQUIRE_ORACLE: ${{ runner.os == 'Linux' && '1' || '' }}
       - name: Smoke test
         run: cargo run -p spiceport -- --help
 

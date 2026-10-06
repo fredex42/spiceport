@@ -6,8 +6,11 @@
 #![forbid(unsafe_code)]
 
 pub mod bitmap;
+pub mod glz;
 pub mod image;
 pub mod jpeg;
+pub mod lz;
 pub mod lz4;
+pub mod quic;
 
 pub use image::{DecodeError, Format, Image, Result};

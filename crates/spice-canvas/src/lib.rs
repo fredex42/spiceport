@@ -12,6 +12,7 @@ mod surface;
 pub use canvas::{Canvas, CanvasError, Result};
 pub use region::Region;
 pub use rop::Rop;
+pub use spice_decode::glz::GlzWindow;
 pub use spice_decode::{Format, Image};
 pub use spice_proto::msg::display::Rect;
 pub use surface::{SharedSurface, SurfaceData};

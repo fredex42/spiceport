@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use log::{debug, trace};
+use spice_decode::glz::GlzWindow;
 use spice_decode::image::{rgb555_to_xrgb, rgb565_to_xrgb};
 use spice_decode::{DecodeError, Format, Image};
 use spice_proto::enums::{
@@ -85,16 +86,28 @@ impl Src {
 }
 
 /// The per-display-channel canvas state: surfaces and caches.
-#[derive(Default)]
 pub struct Canvas {
     surfaces: HashMap<u32, SharedSurface>,
     images: HashMap<u64, Cached>,
     palettes: HashMap<u64, Arc<Vec<u32>>>,
+    /// Shared by every display channel of the session.
+    glz: Arc<GlzWindow>,
+}
+
+impl Default for Canvas {
+    fn default() -> Self {
+        Self::new(GlzWindow::new())
+    }
 }
 
 impl Canvas {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(glz: Arc<GlzWindow>) -> Self {
+        Self {
+            surfaces: HashMap::new(),
+            images: HashMap::new(),
+            palettes: HashMap::new(),
+            glz,
+        }
     }
 
     // ---- surfaces ------------------------------------------------------
@@ -210,23 +223,41 @@ impl Canvas {
                 )?
             }
             ImageData::Lz4(data) => spice_decode::lz4::decode(data, d.width, d.height)?,
-            ImageData::Jpeg(data) => {
-                let i = spice_decode::jpeg::decode(data)?;
+            ImageData::Jpeg(data) => spice_decode::jpeg::decode(data)?,
+            ImageData::Quic(data) => spice_decode::quic::decode(data)?,
+            ImageData::LzRgb(data) => spice_decode::lz::decode(data, None)?,
+            ImageData::LzPlt {
+                flags,
+                palette,
+                data,
+            } => {
+                let pal = self.resolve_palette(palette, *flags, dst_fmt)?;
+                spice_decode::lz::decode(data, pal.as_deref().map(|v| &v[..]))?
+            }
+            // canvas_get_glz passes no palette: servers only send RGB GLZ.
+            ImageData::GlzRgb(data) => spice_decode::glz::decode(&self.glz, data, None)?,
+            ImageData::ZlibGlzRgb {
+                glz_data_size,
+                data,
+            } => spice_decode::glz::decode_zlib(&self.glz, data, *glz_data_size, None)?,
+            ImageData::JpegAlpha {
+                flags,
+                jpeg_size,
+                data,
+            } => {
+                let n = (*jpeg_size as usize).min(data.len());
+                let mut i = spice_decode::jpeg::decode(&data[..n])?;
                 check_size(&i, d.width, d.height)?;
+                i.format = Format::Argb32;
+                let top_down = flags & spice_proto::enums::jpeg_alpha_flags::TOP_DOWN != 0;
+                spice_decode::lz::decode_alpha_into(&data[n..], &mut i, top_down)?;
                 i
             }
             ImageData::FromCache => return self.cache_get(d.id, false),
             ImageData::FromCacheLossless => return self.cache_get(d.id, true),
-            ImageData::Quic(_)
-            | ImageData::LzRgb(_)
-            | ImageData::GlzRgb(_)
-            | ImageData::LzPlt { .. }
-            | ImageData::ZlibGlzRgb { .. }
-            | ImageData::JpegAlpha { .. } => {
-                return Err(CanvasError::Unsupported(format!("image type {}", d.ty)));
-            }
             ImageData::Surface(_) => unreachable!("surfaces are handled by the caller"),
         };
+        check_size(&image, d.width, d.height)?;
         Ok(Arc::new(image))
     }
 
@@ -855,7 +886,7 @@ mod tests {
 
     #[test]
     fn fill_with_clip_and_xor() {
-        let mut c = Canvas::new();
+        let mut c = Canvas::default();
         c.create_surface(0, 8, 8, surface_fmt::XRGB32).unwrap();
         let fill = Fill {
             brush: Brush::Solid(0x00ff00),
@@ -882,7 +913,7 @@ mod tests {
 
     #[test]
     fn copy_caches_and_reuses_images() {
-        let mut c = Canvas::new();
+        let mut c = Canvas::default();
         c.create_surface(0, 4, 4, surface_fmt::XRGB32).unwrap();
         let data: Vec<u8> = [1u32, 2, 3, 4]
             .iter()
@@ -930,7 +961,7 @@ mod tests {
 
     #[test]
     fn noop_still_caches() {
-        let mut c = Canvas::new();
+        let mut c = Canvas::default();
         c.create_surface(0, 4, 4, surface_fmt::XRGB32).unwrap();
         let data = 9u32.to_le_bytes();
         let copy = Copy {
@@ -947,7 +978,7 @@ mod tests {
 
     #[test]
     fn copy_bits_overlapping() {
-        let mut c = Canvas::new();
+        let mut c = Canvas::default();
         let s = c.create_surface(0, 4, 1, surface_fmt::XRGB32).unwrap();
         s.lock().unwrap().pixels = vec![1, 2, 3, 4];
         c.copy_bits(&CopyBits {
@@ -960,7 +991,7 @@ mod tests {
 
     #[test]
     fn mask_limits_fill() {
-        let mut c = Canvas::new();
+        let mut c = Canvas::default();
         c.create_surface(0, 4, 1, surface_fmt::XRGB32).unwrap();
         let mask_data = [0b0000_0101u8];
         let mask = QMask {
@@ -1007,7 +1038,7 @@ mod tests {
 
     #[test]
     fn scaled_copy_nearest() {
-        let mut c = Canvas::new();
+        let mut c = Canvas::default();
         c.create_surface(0, 4, 2, surface_fmt::XRGB32).unwrap();
         let data: Vec<u8> = [1u32, 2].iter().flat_map(|p| p.to_le_bytes()).collect();
         let copy = Copy {
@@ -1024,7 +1055,7 @@ mod tests {
 
     #[test]
     fn pattern_brush_tiles() {
-        let mut c = Canvas::new();
+        let mut c = Canvas::default();
         c.create_surface(0, 4, 1, surface_fmt::XRGB32).unwrap();
         let data: Vec<u8> = [5u32, 6].iter().flat_map(|p| p.to_le_bytes()).collect();
         let fill = Fill {
