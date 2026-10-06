@@ -27,8 +27,16 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    let release_keys = match ui::GrabSequence::parse(&cli.release_keys) {
+        Ok(k) => k,
+        Err(e) => {
+            error!("--release-keys: {e:#}");
+            return ExitCode::from(2);
+        }
+    };
     let opts = ui::UiOptions {
         fullscreen: cli.fullscreen,
+        release_keys,
         title_host: cfg
             .uri
             .host

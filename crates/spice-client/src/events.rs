@@ -2,6 +2,10 @@
 //! asks of the client ([`ClientCommand`]). These replace spice-gtk's GObject
 //! signals and properties.
 
+use std::sync::Arc;
+
+pub use crate::cursor::CursorShape;
+pub use crate::inputs_ch::InputCmd;
 pub use spice_canvas::{SharedSurface, SurfaceData};
 
 /// `SpiceMouseMode`
@@ -69,12 +73,25 @@ pub enum ClientEvent {
         max_allowed: u16,
         heads: Vec<spice_proto::msg::display::Head>,
     },
+    /// New cursor shape; `None` means "use the default cursor".
+    CursorSet(Option<Arc<CursorShape>>),
+    CursorHide,
+    /// Server mouse mode: where the guest's cursor is.
+    CursorMove {
+        x: i32,
+        y: i32,
+    },
+    CursorReset,
+    /// The guest's lock-key state (`SpiceKeyboardModifierFlags`).
+    KeyModifiers(u16),
 }
 
 #[derive(Debug, Clone)]
 pub enum ClientCommand {
     /// Close the session.
     Quit,
+    /// Keyboard and mouse input for the inputs channel.
+    Input(InputCmd),
 }
 
 /// Receives client events. Called from tokio worker threads, so it must not

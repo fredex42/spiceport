@@ -300,9 +300,11 @@ impl Channel {
                     notify_severity::ERROR => "error",
                     _ => "?",
                 };
+                // spice-gtk logs these at debug level; QEMU warns about
+                // insecure channels on every connection.
                 if n.severity >= notify_severity::WARN {
                     chan_log!(
-                        warn,
+                        info,
                         self,
                         "server notify ({sev} #{}): {}",
                         n.what,

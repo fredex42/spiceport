@@ -2,10 +2,11 @@
 
 use anyhow::anyhow;
 use log::{debug, warn};
+use sdl3::event::Event;
 use sdl3::pixels::{Color, PixelFormat};
-use sdl3::render::{Texture, TextureCreator, WindowCanvas};
+use sdl3::render::{FRect, Texture, TextureCreator, WindowCanvas};
 use sdl3::sys::render::SDL_RendererLogicalPresentation;
-use sdl3::video::WindowContext;
+use sdl3::video::{Window, WindowContext};
 use spice_client::SharedSurface;
 
 use super::UiOptions;
@@ -17,6 +18,8 @@ pub struct DisplayWindow {
     mark: bool,
     vm_name: Option<String>,
     host: String,
+    grabbed: bool,
+    release_hint: String,
 }
 
 impl DisplayWindow {
@@ -38,6 +41,8 @@ impl DisplayWindow {
             mark: false,
             vm_name: None,
             host: opts.title_host.clone(),
+            grabbed: false,
+            release_hint: String::new(),
         };
         w.update_title();
         Ok(w)
@@ -47,17 +52,54 @@ impl DisplayWindow {
         self.canvas.texture_creator()
     }
 
+    pub fn window(&self) -> &Window {
+        self.canvas.window()
+    }
+
+    pub fn window_mut(&mut self) -> &mut Window {
+        self.canvas.window_mut()
+    }
+
+    pub fn display_size(&self) -> (u32, u32) {
+        self.size
+    }
+
     pub fn set_vm_name(&mut self, name: &str) {
         self.vm_name = Some(name.to_string());
         self.update_title();
     }
 
+    pub fn set_release_hint(&mut self, hint: &str) {
+        self.release_hint = hint.to_string();
+    }
+
+    pub fn set_grabbed(&mut self, grabbed: bool) {
+        self.grabbed = grabbed;
+        self.update_title();
+    }
+
     fn update_title(&mut self) {
         let base = self.vm_name.as_deref().unwrap_or(&self.host);
-        let title = format!("{base} - spiceport");
+        let mut title = format!("{base} - spiceport");
+        if self.grabbed {
+            title += &format!(" (Press {} to release pointer)", self.release_hint);
+        }
         if let Err(e) = self.canvas.window_mut().set_title(&title) {
             warn!("set title: {e}");
         }
+    }
+
+    pub fn toggle_fullscreen(&mut self) {
+        let w = self.canvas.window_mut();
+        let on = w.fullscreen_state() == sdl3::video::FullscreenType::Off;
+        if let Err(e) = w.set_fullscreen(on) {
+            warn!("fullscreen: {e}");
+        }
+    }
+
+    /// Convert a mouse event's window coordinates to guest display pixels.
+    pub fn to_display_coords(&self, ev: &mut Event) {
+        ev.convert_coords(&self.canvas);
     }
 
     /// A new primary surface: size the window to it and make a texture.
@@ -82,12 +124,8 @@ impl DisplayWindow {
                 .set_logical_size(width, height, SDL_RendererLogicalPresentation::LETTERBOX)
                 .map_err(|e| anyhow!("logical size: {e}"))?;
         }
-        // Upload everything once; afterwards only dirty areas.
-        {
-            let mut s = surface.lock().unwrap();
-            s.dirty = Some(s.bounds());
-        }
         self.surface = Some(surface);
+        self.mark_all_dirty();
         self.upload_dirty(&mut tex);
         Ok(tex)
     }
@@ -98,6 +136,13 @@ impl DisplayWindow {
 
     pub fn set_mark(&mut self, mark: bool) {
         self.mark = mark;
+    }
+
+    pub fn mark_all_dirty(&mut self) {
+        if let Some(s) = &self.surface {
+            let mut s = s.lock().unwrap();
+            s.dirty = Some(s.bounds());
+        }
     }
 
     /// Copy the surface's dirty area into the texture. Holds the surface
@@ -121,14 +166,25 @@ impl DisplayWindow {
         true
     }
 
-    pub fn present(&mut self, tex: Option<&Texture<'_>>) {
+    /// Draw the display, plus the guest cursor sprite at `(x, y)` in server
+    /// mouse mode.
+    pub fn present(
+        &mut self,
+        tex: Option<&Texture<'_>>,
+        cursor: Option<(&Texture<'_>, i32, i32, u32, u32)>,
+    ) {
         self.canvas.set_draw_color(Color::RGB(0, 0, 0));
         self.canvas.clear();
         if let Some(t) = tex
             && self.surface.is_some()
-            && let Err(e) = self.canvas.copy(t, None, None)
         {
-            warn!("render copy failed: {e}");
+            if let Err(e) = self.canvas.copy(t, None, None) {
+                warn!("render copy failed: {e}");
+            }
+            if let Some((ct, x, y, w, h)) = cursor {
+                let dst = FRect::new(x as f32, y as f32, w as f32, h as f32);
+                let _ = self.canvas.copy(ct, None, dst);
+            }
         }
         self.canvas.present();
     }

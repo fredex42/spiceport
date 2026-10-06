@@ -2,6 +2,9 @@
 //! thread; talks to the network thread through [`ClientEvent`]s (pushed via
 //! an mpsc queue plus an SDL wakeup event) and [`ClientCommand`]s.
 
+mod cursor;
+mod input;
+mod keymap;
 mod window;
 
 use std::sync::Arc;
@@ -11,9 +14,16 @@ use std::sync::mpsc;
 use anyhow::{Context, anyhow};
 use log::{debug, info, warn};
 use sdl3::event::{Event, EventSender, WindowEvent};
-use spice_client::{ClientCommand, ClientEvent, EventSink, SessionConfig};
+use sdl3::keyboard::KeyboardUtil;
+use sdl3::mouse::MouseUtil;
+use sdl3::render::{Texture, TextureCreator};
+use sdl3::video::WindowContext;
+use spice_client::{ClientCommand, ClientEvent, EventSink, MouseMode, SessionConfig};
 
 use crate::net::NetThread;
+use cursor::CursorState;
+pub use input::GrabSequence;
+use input::Input;
 use window::DisplayWindow;
 
 /// Frontend options that don't concern the session itself.
@@ -21,6 +31,7 @@ use window::DisplayWindow;
 pub struct UiOptions {
     pub fullscreen: bool,
     pub title_host: String,
+    pub release_keys: GrabSequence,
 }
 
 /// The SDL user event that wakes `wait_event` when client events are queued.
@@ -54,6 +65,21 @@ impl EventSink for Bridge {
     }
 }
 
+struct App<'tc> {
+    win: DisplayWindow,
+    tc: &'tc TextureCreator<WindowContext>,
+    display_tex: Option<Texture<'tc>>,
+    cursor_tex: Option<Texture<'tc>>,
+    input: Input,
+    cursor: CursorState,
+    mouse: MouseUtil,
+    keyboard: KeyboardUtil,
+    net: NetThread,
+    focused: bool,
+    out: Vec<ClientCommand>,
+    redraw: bool,
+}
+
 pub fn run(cfg: SessionConfig, opts: UiOptions) -> anyhow::Result<()> {
     let sdl = sdl3::init().map_err(|e| anyhow!("SDL init failed: {e}"))?;
     let video = sdl
@@ -70,7 +96,7 @@ pub fn run(cfg: SessionConfig, opts: UiOptions) -> anyhow::Result<()> {
     let (tx, rx) = mpsc::channel();
     let pending = Arc::new(AtomicBool::new(false));
     let bridge = Arc::new(Bridge {
-        tx: tx.clone(),
+        tx,
         wake: events.event_sender(),
         pending: pending.clone(),
     });
@@ -82,96 +108,304 @@ pub fn run(cfg: SessionConfig, opts: UiOptions) -> anyhow::Result<()> {
     let mut pump = sdl
         .event_pump()
         .map_err(|e| anyhow!("SDL event pump: {e}"))?;
-    let mut win = DisplayWindow::new(&video, &opts).context("creating window")?;
-    let texture_creator = win.texture_creator();
-    let mut texture = None;
+    let win = DisplayWindow::new(&video, &opts).context("creating window")?;
+    let tc = win.texture_creator();
+    let mut app = App {
+        win,
+        tc: &tc,
+        display_tex: None,
+        cursor_tex: None,
+        input: Input::new(opts.release_keys.clone()),
+        cursor: CursorState::new(),
+        mouse: sdl.mouse(),
+        keyboard: sdl.keyboard(),
+        net,
+        focused: false,
+        out: Vec::new(),
+        redraw: true,
+    };
+    app.win.set_release_hint(&app.input.release_hint());
 
     let mut running = true;
     while running {
-        let ev = pump.wait_event();
-        let mut redraw = false;
-        for ev in std::iter::once(ev).chain(pump.poll_iter()) {
-            match ev {
-                Event::Quit { .. } => {
-                    info!("quit requested");
-                    net.send(ClientCommand::Quit);
-                }
-                Event::Window { win_event, .. } => match win_event {
-                    WindowEvent::CloseRequested => net.send(ClientCommand::Quit),
-                    WindowEvent::Exposed
-                    | WindowEvent::Resized(..)
-                    | WindowEvent::PixelSizeChanged(..)
-                    | WindowEvent::Shown
-                    | WindowEvent::Restored => redraw = true,
-                    _ => {}
-                },
-                Event::User { .. } if ev.as_user_event_type::<Wake>().is_some() => {
-                    pending.store(false, Ordering::Release);
-                    while let Ok(app_ev) = rx.try_recv() {
-                        match app_ev {
-                            AppEvent::SessionEnded => running = false,
-                            AppEvent::Client(ce) => {
-                                redraw |= handle_client_event(
-                                    ce,
-                                    &mut win,
-                                    &texture_creator,
-                                    &mut texture,
-                                )?
-                            }
-                        }
+        let first = pump.wait_event();
+        for ev in std::iter::once(first).chain(pump.poll_iter()) {
+            if let Event::User { .. } = ev
+                && ev.as_user_event_type::<Wake>().is_some()
+            {
+                pending.store(false, Ordering::Release);
+                while let Ok(app_ev) = rx.try_recv() {
+                    match app_ev {
+                        AppEvent::SessionEnded => running = false,
+                        AppEvent::Client(ce) => app.client_event(ce)?,
                     }
                 }
-                _ => {}
+                continue;
             }
+            app.sdl_event(ev);
         }
-        if redraw {
-            win.present(texture.as_ref());
+        app.flush();
+        if app.redraw {
+            app.redraw = false;
+            app.present();
         }
-        if !running || net.is_finished() {
+        if !running || app.net.is_finished() {
             break;
         }
     }
-    drop(texture);
+    let App {
+        net,
+        display_tex,
+        cursor_tex,
+        ..
+    } = app;
+    drop((display_tex, cursor_tex));
     net.join().map_err(Into::into)
 }
 
-fn handle_client_event<'tc>(
-    ev: ClientEvent,
-    win: &mut DisplayWindow,
-    tc: &'tc sdl3::render::TextureCreator<sdl3::video::WindowContext>,
-    texture: &mut Option<sdl3::render::Texture<'tc>>,
-) -> anyhow::Result<bool> {
-    match ev {
-        ClientEvent::Name(name) => win.set_vm_name(&name),
-        ClientEvent::DisplayPrimary {
-            display,
-            surface,
-            width,
-            height,
-        } => {
-            if display != 0 {
-                warn!("display {display}: only one display is supported for now");
-                return Ok(false);
-            }
-            *texture = Some(win.set_primary(tc, surface, width, height)?);
-            return Ok(true);
+impl<'tc> App<'tc> {
+    fn flush(&mut self) {
+        for c in self.out.drain(..) {
+            self.net.send(c);
         }
-        ClientEvent::DisplayPrimaryDestroyed { display: 0 } => {
-            win.clear_primary();
-            *texture = None;
-            return Ok(true);
-        }
-        ClientEvent::Invalidate { display: 0 } => {
-            if let Some(t) = texture.as_mut() {
-                return Ok(win.upload_dirty(t));
-            }
-        }
-        ClientEvent::DisplayMark { display: 0, mark } => {
-            debug!("display mark: {mark}");
-            win.set_mark(mark);
-            return Ok(true);
-        }
-        other => debug!("client event: {other:?}"),
     }
-    Ok(false)
+
+    fn present(&mut self) {
+        let sprite = match (
+            self.input.mouse_mode,
+            self.input.mouse_grabbed,
+            self.cursor.visible,
+        ) {
+            (MouseMode::Server, true, true) => self
+                .cursor
+                .guest_pos
+                .zip(self.cursor.shape.as_ref())
+                .map(|(p, s)| {
+                    (
+                        p.0 - s.hot_x as i32,
+                        p.1 - s.hot_y as i32,
+                        s.width,
+                        s.height,
+                    )
+                }),
+            _ => None,
+        };
+        let cursor =
+            sprite.and_then(|(x, y, w, h)| self.cursor_tex.as_ref().map(|t| (t, x, y, w, h)));
+        self.win.present(self.display_tex.as_ref(), cursor);
+    }
+
+    fn set_mouse_grab(&mut self, on: bool) {
+        if on == self.input.mouse_grabbed {
+            return;
+        }
+        debug!("pointer grab {}", if on { "on" } else { "off" });
+        self.input.mouse_grabbed = on;
+        self.mouse.set_relative_mouse_mode(self.win.window(), on);
+        self.win.window_mut().set_mouse_grab(on);
+        if on {
+            self.set_keyboard_grab(true);
+        }
+        self.win.set_grabbed(on);
+        self.redraw = true;
+    }
+
+    fn set_keyboard_grab(&mut self, on: bool) {
+        let on = on && self.focused && !self.input.keyboard_grab_released;
+        self.win.window_mut().set_keyboard_grab(on);
+    }
+
+    fn set_mouse_mode(&mut self, mode: MouseMode) {
+        self.input.mouse_mode = mode;
+        if mode == MouseMode::Client {
+            self.set_mouse_grab(false);
+        }
+        self.cursor.apply(&self.mouse, mode);
+        self.redraw = true;
+    }
+
+    fn client_event(&mut self, ev: ClientEvent) -> anyhow::Result<()> {
+        match ev {
+            ClientEvent::Name(name) => self.win.set_vm_name(&name),
+            ClientEvent::DisplayPrimary {
+                display,
+                surface,
+                width,
+                height,
+            } => {
+                if display != 0 {
+                    warn!("display {display}: only one display is supported for now");
+                    return Ok(());
+                }
+                self.display_tex = Some(self.win.set_primary(self.tc, surface, width, height)?);
+                self.redraw = true;
+            }
+            ClientEvent::DisplayPrimaryDestroyed { display: 0 } => {
+                self.win.clear_primary();
+                self.display_tex = None;
+                self.redraw = true;
+            }
+            ClientEvent::Invalidate { display: 0 } => {
+                if let Some(t) = self.display_tex.as_mut() {
+                    self.redraw |= self.win.upload_dirty(t);
+                }
+            }
+            ClientEvent::DisplayMark { display: 0, mark } => {
+                debug!("display mark: {mark}");
+                self.win.set_mark(mark);
+                self.redraw = true;
+            }
+            ClientEvent::MouseMode(m) => self.set_mouse_mode(m),
+            ClientEvent::CursorSet(shape) => {
+                self.cursor.shape = shape;
+                self.cursor.visible = true;
+                self.cursor_tex = self.cursor.texture(self.tc);
+                self.cursor.apply(&self.mouse, self.input.mouse_mode);
+                self.redraw = true;
+            }
+            ClientEvent::CursorHide => {
+                self.cursor.visible = false;
+                self.cursor.apply(&self.mouse, self.input.mouse_mode);
+                self.redraw = true;
+            }
+            ClientEvent::CursorMove { x, y } => {
+                self.cursor.guest_pos = Some((x, y));
+                if !self.cursor.visible {
+                    // cursor_move: "apparently we have to restore cursor"
+                    self.cursor.visible = true;
+                    self.cursor.apply(&self.mouse, self.input.mouse_mode);
+                }
+                self.redraw = true;
+            }
+            ClientEvent::CursorReset => {
+                self.cursor.shape = None;
+                self.cursor_tex = None;
+                self.cursor.apply(&self.mouse, self.input.mouse_mode);
+            }
+            ClientEvent::KeyModifiers(locks) => {
+                self.input.guest_locks_changed(locks);
+                self.input
+                    .sync_locks(self.keyboard.mod_state(), false, &mut self.out);
+            }
+            other => debug!("client event: {other:?}"),
+        }
+        Ok(())
+    }
+
+    fn sdl_event(&mut self, mut ev: Event) {
+        if ev.is_mouse() {
+            // Window pixels → guest display pixels (handles letterboxing and HiDPI).
+            self.win.to_display_coords(&mut ev);
+        }
+        let size = self.win.display_size();
+        match ev {
+            Event::Quit { .. } => {
+                info!("quit requested");
+                self.net.send(ClientCommand::Quit);
+            }
+            Event::Window { win_event, .. } => match win_event {
+                WindowEvent::CloseRequested => self.net.send(ClientCommand::Quit),
+                WindowEvent::FocusGained => {
+                    self.focused = true;
+                    // focus_in_event
+                    self.input.release_keys(&mut self.out);
+                    self.input
+                        .sync_locks(self.keyboard.mod_state(), false, &mut self.out);
+                    self.set_keyboard_grab(true);
+                }
+                WindowEvent::FocusLost => {
+                    self.focused = false;
+                    self.input.focus_lost(&mut self.out);
+                    self.set_mouse_grab(false);
+                    self.set_keyboard_grab(false);
+                }
+                WindowEvent::MouseEnter => {
+                    // motion_event: re-grab the keyboard after a sequence release.
+                    if self.input.keyboard_grab_released && self.focused {
+                        self.input.keyboard_grab_released = false;
+                        self.input.release_keys(&mut self.out);
+                        self.set_keyboard_grab(true);
+                    }
+                }
+                WindowEvent::Exposed
+                | WindowEvent::Resized(..)
+                | WindowEvent::PixelSizeChanged(..)
+                | WindowEvent::Shown
+                | WindowEvent::Restored => self.redraw = true,
+                _ => {}
+            },
+            Event::KeyDown {
+                scancode: Some(sc),
+                keymod,
+                repeat,
+                ..
+            } => {
+                let act = self.input.key(sc, keymod, true, repeat, &mut self.out);
+                self.actions(act);
+            }
+            Event::KeyUp {
+                scancode: Some(sc),
+                keymod,
+                ..
+            } => {
+                let act = self.input.key(sc, keymod, false, false, &mut self.out);
+                self.actions(act);
+            }
+            Event::MouseMotion {
+                x, y, xrel, yrel, ..
+            } => self
+                .input
+                .mouse_motion(x, y, xrel, yrel, size, &mut self.out),
+            Event::MouseButtonDown {
+                mouse_btn, x, y, ..
+            } => {
+                if self
+                    .input
+                    .mouse_button(mouse_btn, true, x, y, size, &mut self.out)
+                {
+                    self.set_mouse_grab(true);
+                }
+            }
+            Event::MouseButtonUp {
+                mouse_btn, x, y, ..
+            } => {
+                self.input
+                    .mouse_button(mouse_btn, false, x, y, size, &mut self.out);
+            }
+            Event::MouseWheel { y, direction, .. } => {
+                let y = if direction == sdl3::mouse::MouseWheelDirection::Flipped {
+                    -y
+                } else {
+                    y
+                };
+                self.input.wheel(y, &mut self.out);
+            }
+            Event::RenderTargetsReset { .. } | Event::RenderDeviceReset { .. } => {
+                // Textures may be lost: re-upload everything.
+                if let Some(t) = self.display_tex.as_mut() {
+                    self.win.mark_all_dirty();
+                    self.win.upload_dirty(t);
+                }
+                self.cursor_tex = self.cursor.texture(self.tc);
+                self.redraw = true;
+            }
+            _ => {}
+        }
+    }
+
+    fn actions(&mut self, act: input::Actions) {
+        if let Some(g) = act.grab_mouse {
+            self.set_mouse_grab(g);
+        }
+        if let Some(g) = act.grab_keyboard {
+            self.set_keyboard_grab(g);
+        }
+        if act.toggle_fullscreen {
+            self.win.toggle_fullscreen();
+        }
+        if act.quit {
+            info!("quit shortcut");
+            self.net.send(ClientCommand::Quit);
+        }
+    }
 }

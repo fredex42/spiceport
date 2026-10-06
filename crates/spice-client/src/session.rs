@@ -14,9 +14,11 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
 use crate::channel::Channel;
+use crate::cursor_ch::CursorChannel;
 use crate::display_ch::DisplayChannel;
 use crate::error::{ClientError, Result};
 use crate::events::{ClientCommand, ClientEvent, EventSink};
+use crate::inputs_ch::{InputCmd, InputsChannel};
 use crate::main_ch::{MainChannel, MainCmd};
 use crate::uri::SpiceUri;
 
@@ -183,6 +185,7 @@ pub async fn run(
     let mut main_task = tokio::spawn(MainChannel::new(main, sess_tx, main_rx).run());
     let mut channels: JoinSet<(u8, u8, Result<()>)> = JoinSet::new();
     let _ = &main_tx;
+    let mut inputs_tx: Option<mpsc::UnboundedSender<InputCmd>> = None;
 
     let result = loop {
         tokio::select! {
@@ -197,11 +200,18 @@ pub async fn run(
                     info!("disconnecting");
                     break Ok(());
                 }
+                Some(ClientCommand::Input(i)) => {
+                    if let Some(tx) = &inputs_tx {
+                        let _ = tx.send(i);
+                    }
+                }
             },
             Some(m) = sess_rx.recv() => match m {
                 SessionMsg::Channels(list) => {
                     for c in list {
-                        spawn_channel(&shared, &mut channels, c);
+                        if let Some(tx) = spawn_channel(&shared, &mut channels, c) {
+                            inputs_tx = Some(tx);
+                        }
                     }
                 }
             },
@@ -228,25 +238,44 @@ pub async fn run(
     result
 }
 
-fn spawn_channel(shared: &Arc<Shared>, set: &mut JoinSet<(u8, u8, Result<()>)>, c: ChannelId) {
+/// Start a channel task. Returns the command sender for an inputs channel.
+fn spawn_channel(
+    shared: &Arc<Shared>,
+    set: &mut JoinSet<(u8, u8, Result<()>)>,
+    c: ChannelId,
+) -> Option<mpsc::UnboundedSender<InputCmd>> {
     let (ty, id) = (c.channel_type, c.id);
     let name = channel_type::name(ty);
     let shared = shared.clone();
-    match ty {
-        channel_type::DISPLAY => {
+    macro_rules! spawn {
+        ($caps:expr, |$ch:ident| $run:expr) => {
             set.spawn(async move {
                 let r = async {
-                    let ch = Channel::open(&shared, ty, id, DisplayChannel::caps()).await?;
+                    let $ch = Channel::open(&shared, ty, id, $caps).await?;
                     shared.emit(ClientEvent::ChannelUp {
                         channel_type: ty,
                         id,
                     });
-                    DisplayChannel::new(ch).run().await
+                    $run.await
                 }
                 .await;
                 (ty, id, r)
-            });
+            })
+        };
+    }
+    match ty {
+        channel_type::DISPLAY => {
+            spawn!(DisplayChannel::caps(), |ch| DisplayChannel::new(ch).run());
+        }
+        channel_type::CURSOR => {
+            spawn!(CursorChannel::caps(), |ch| CursorChannel::new(ch).run());
+        }
+        channel_type::INPUTS => {
+            let (tx, rx) = mpsc::unbounded_channel();
+            spawn!(InputsChannel::caps(), |ch| InputsChannel::new(ch, rx).run());
+            return Some(tx);
         }
         _ => info!("{name}-{id}: channel type not supported yet; ignoring"),
     }
+    None
 }
