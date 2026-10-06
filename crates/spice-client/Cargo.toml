@@ -8,7 +8,7 @@ rust-version.workspace = true
 
 [features]
 default = []
-opus = []
+opus = ["dep:opus"]
 
 [dependencies]
 spice-proto.workspace = true
@@ -23,6 +23,7 @@ sha1.workspace = true
 rand.workspace = true
 rustls.workspace = true
 tokio-rustls.workspace = true
+opus = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

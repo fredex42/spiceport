@@ -13,6 +13,7 @@ use spice_proto::msg::main::ChannelId;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
+use crate::audio::AudioBackend;
 use crate::channel::Channel;
 use crate::cursor_ch::CursorChannel;
 use crate::display_ch::DisplayChannel;
@@ -20,6 +21,8 @@ use crate::error::{ClientError, Result};
 use crate::events::{ClientCommand, ClientEvent, EventSink};
 use crate::inputs_ch::{InputCmd, InputsChannel};
 use crate::main_ch::{MainChannel, MainCmd};
+use crate::playback_ch::PlaybackChannel;
+use crate::record_ch::RecordChannel;
 use crate::uri::SpiceUri;
 
 #[derive(Debug, Clone, Default)]
@@ -43,6 +46,8 @@ pub struct SessionConfig {
     pub enable_record: bool,
     /// Resize the guest to follow the window (needs the agent).
     pub agent_resize: bool,
+    /// Audio devices; without one, audio channels are not opened.
+    pub audio: Option<Arc<dyn AudioBackend>>,
 }
 
 impl std::fmt::Debug for SessionConfig {
@@ -69,6 +74,7 @@ impl SessionConfig {
             enable_audio: true,
             enable_record: true,
             agent_resize: true,
+            audio: None,
         }
     }
 
@@ -277,6 +283,18 @@ fn spawn_channel(
         }
         channel_type::CURSOR => {
             spawn!(CursorChannel::caps(), |ch| CursorChannel::new(ch).run());
+        }
+        channel_type::PLAYBACK if shared.config.enable_audio && shared.config.audio.is_some() => {
+            let be = shared.config.audio.clone();
+            spawn!(PlaybackChannel::caps(), |ch| PlaybackChannel::new(ch, be)
+                .run());
+        }
+        channel_type::RECORD if shared.config.enable_record && shared.config.audio.is_some() => {
+            let be = shared.config.audio.clone();
+            spawn!(RecordChannel::caps(), |ch| RecordChannel::new(ch, be).run());
+        }
+        channel_type::PLAYBACK | channel_type::RECORD => {
+            info!("{name}-{id}: audio disabled; not opening");
         }
         channel_type::INPUTS => {
             let (tx, rx) = mpsc::unbounded_channel();

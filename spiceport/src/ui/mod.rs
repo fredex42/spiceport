@@ -2,6 +2,7 @@
 //! thread; talks to the network thread through [`ClientEvent`]s (pushed via
 //! an mpsc queue plus an SDL wakeup event) and [`ClientCommand`]s.
 
+mod audio;
 mod cursor;
 mod input;
 mod keymap;
@@ -86,8 +87,24 @@ struct App<'tc> {
     have_primary: bool,
 }
 
-pub fn run(cfg: SessionConfig, opts: UiOptions) -> anyhow::Result<()> {
+pub fn run(mut cfg: SessionConfig, opts: UiOptions) -> anyhow::Result<()> {
     let sdl = sdl3::init().map_err(|e| anyhow!("SDL init failed: {e}"))?;
+    // Keep the audio subsystem alive for the whole session.
+    let _audio = if cfg.enable_audio || cfg.enable_record {
+        match sdl.audio() {
+            Ok(a) => {
+                info!("SDL audio driver: {}", a.current_audio_driver());
+                cfg.audio = Some(Arc::new(audio::SdlAudio));
+                Some(a)
+            }
+            Err(e) => {
+                warn!("audio disabled: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
     let video = sdl
         .video()
         .map_err(|e| anyhow!("SDL video init failed: {e}"))?;

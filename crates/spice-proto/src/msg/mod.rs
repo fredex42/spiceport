@@ -1,6 +1,7 @@
 //! Server message demarshallers and client message marshallers, written by
 //! hand from spice-common `spice.proto` for the subset spiceport uses.
 
+pub mod audio;
 pub mod base;
 pub mod cursor;
 pub mod display;

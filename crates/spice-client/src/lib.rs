@@ -3,6 +3,7 @@
 //! This crate has no UI dependency. It reports what happens through
 //! [`ClientEvent`]s and takes [`ClientCommand`]s from the frontend.
 
+pub mod audio;
 pub mod channel;
 pub mod cursor;
 mod cursor_ch;
@@ -12,6 +13,8 @@ pub mod events;
 mod inputs_ch;
 pub mod link;
 mod main_ch;
+mod playback_ch;
+mod record_ch;
 pub mod session;
 mod text;
 mod tls;

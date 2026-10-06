@@ -16,7 +16,7 @@ version = "0.1.0"
 edition = "2024"
 license = "LGPL-2.1-or-later"
 repository = "https://github.com/fredex42/spiceport"
-rust-version = "1.85"
+rust-version = "1.88"
 
 [workspace.dependencies]
 spice-proto = { path = "crates/spice-proto" }
