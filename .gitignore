@@ -1,7 +1,6 @@
-/target
 **/*.rs.bk
-/fuzz/target
-/fuzz/corpus
 /fuzz/artifacts
-/tests/c-oracle/build
+/fuzz/corpus
+/fuzz/target
+/target
 /tests/c-oracle/build

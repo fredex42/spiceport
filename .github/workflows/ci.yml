@@ -61,3 +61,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake mingw-w64
       - run: cargo check -p spiceport --target x86_64-pc-windows-gnu
+
+  fuzz-smoke:
+    name: fuzz smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz --locked
+      - name: Run each target briefly
+        working-directory: fuzz
+        run: |
+          for t in quic lz glz lz4 jpeg bitmap server_messages; do
+            cargo fuzz run "$t" -- -max_total_time=30
+          done

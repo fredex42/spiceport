@@ -474,6 +474,34 @@ mod tests {
         assert!(decode(&d, None).is_err());
     }
 
+    /// JPEG_ALPHA = a JPEG plus an LZ XXXA alpha plane (`canvas_get_jpeg_alpha`).
+    #[test]
+    fn jpeg_alpha_plane() {
+        let (w, h) = (4u32, 2u32);
+        let rgb = vec![200u8; (w * h * 3) as usize];
+        let jpeg = crate::jpeg::tests::encode_rgb(w as u16, h as u16, &rgb);
+        for top_down in [true, false] {
+            let mut alpha = header(LzType::Xxxa, w, h, w * 4, top_down);
+            alpha.push((w * h - 1) as u8); // one literal run of 8 bytes
+            alpha.extend(0..(w * h) as u8);
+            let mut img = crate::jpeg::decode(&jpeg).unwrap();
+            decode_alpha_into(&alpha, &mut img, top_down).unwrap();
+            let a: Vec<u32> = img.data.iter().map(|p| p >> 24).collect();
+            if top_down {
+                assert_eq!(a, [0, 1, 2, 3, 4, 5, 6, 7]);
+            } else {
+                assert_eq!(a, [4, 5, 6, 7, 0, 1, 2, 3]);
+            }
+            assert!(
+                img.data.iter().all(|p| (p >> 16) & 0xff > 180),
+                "colour kept"
+            );
+            // A mismatched orientation flag is rejected, like the C asserts.
+            let mut img = crate::jpeg::decode(&jpeg).unwrap();
+            assert!(decode_alpha_into(&alpha, &mut img, !top_down).is_err());
+        }
+    }
+
     proptest::proptest! {
         #[test]
         fn never_panics(body in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..300),

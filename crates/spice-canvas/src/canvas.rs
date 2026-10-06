@@ -209,6 +209,10 @@ impl Canvas {
     /// Decode the image data itself (`get_surface_from_canvas`).
     fn decode_image(&mut self, img: &ImageMsg<'_>, dst_fmt: u32) -> Result<Arc<Image>> {
         let d = &img.descriptor;
+        trace!(
+            "image {:#x}: type {} {}x{} flags {:#x}",
+            d.id, d.ty, d.width, d.height, d.flags
+        );
         let image = match &img.data {
             ImageData::Bitmap(b) => {
                 let pal = self.resolve_palette(&b.palette, b.flags, dst_fmt)?;

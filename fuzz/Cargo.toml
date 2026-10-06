@@ -1,0 +1,59 @@
+[package]
+name = "spiceport-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "LGPL-2.1-or-later"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+spice-decode = { path = "../crates/spice-decode" }
+spice-proto = { path = "../crates/spice-proto" }
+
+# Not part of the main workspace (needs nightly + cargo-fuzz to run).
+[workspace]
+
+[[bin]]
+name = "quic"
+path = "fuzz_targets/quic.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "lz"
+path = "fuzz_targets/lz.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "glz"
+path = "fuzz_targets/glz.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "lz4"
+path = "fuzz_targets/lz4.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "jpeg"
+path = "fuzz_targets/jpeg.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "bitmap"
+path = "fuzz_targets/bitmap.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "server_messages"
+path = "fuzz_targets/server_messages.rs"
+test = false
+doc = false
