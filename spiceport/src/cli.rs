@@ -55,6 +55,11 @@ pub struct Cli {
     #[arg(long, value_enum, value_name = "MODE")]
     pub preferred_compression: Option<Compression>,
 
+    /// Video codecs to ask the server for, most preferred first, e.g.
+    /// "h264,mjpeg" (h264 needs a build with the `h264` feature)
+    #[arg(long, value_enum, value_name = "LIST", value_delimiter = ',')]
+    pub preferred_video_codec: Vec<VideoCodec>,
+
     /// Key combination that releases the keyboard/mouse grab
     #[arg(long, value_name = "COMBO", default_value = "ctrl+alt")]
     pub release_keys: String,
@@ -111,6 +116,30 @@ impl Compression {
     }
 }
 
+/// `SpiceVideoCodecType`s this client can decode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum VideoCodec {
+    Mjpeg,
+    H264,
+}
+
+impl VideoCodec {
+    /// The `SpiceVideoCodecType` value.
+    pub fn wire(self) -> u8 {
+        match self {
+            VideoCodec::Mjpeg => 1,
+            VideoCodec::H264 => 3,
+        }
+    }
+
+    pub fn supported(self) -> bool {
+        match self {
+            VideoCodec::Mjpeg => true,
+            VideoCodec::H264 => cfg!(feature = "h264"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,5 +163,24 @@ mod tests {
     fn secure_channels_list() {
         let c = Cli::parse_from(["spiceport", "--secure-channels", "main,inputs", "spice://h"]);
         assert_eq!(c.secure_channels, ["main", "inputs"]);
+    }
+
+    #[test]
+    fn video_codec_list() {
+        let c = Cli::parse_from([
+            "spiceport",
+            "--preferred-video-codec",
+            "h264,mjpeg",
+            "spice://h",
+        ]);
+        assert_eq!(
+            c.preferred_video_codec,
+            [VideoCodec::H264, VideoCodec::Mjpeg]
+        );
+        assert_eq!(c.preferred_video_codec[0].wire(), 3);
+        assert!(
+            Cli::try_parse_from(["spiceport", "--preferred-video-codec", "vp8", "spice://h"])
+                .is_err()
+        );
     }
 }

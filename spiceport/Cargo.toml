@@ -10,6 +10,7 @@ description = "A cross-platform SPICE remote display client (Rust + SDL3 port of
 [features]
 default = ["opus"]
 opus = ["spice-client/opus"]
+h264 = ["spice-client/h264"]
 
 [dependencies]
 spice-client.workspace = true

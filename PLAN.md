@@ -40,7 +40,7 @@ equivalents.
 
 ### Later phases (designed for, not built in v1)
 
-- H.264 video streams (openh264), then VP8/VP9/H.265 if a pure-Rust or easily bundled decoder is available.
+- H.264 video streams (FFmpeg libavcodec, see section 5), then VP8/VP9/H.265 if a pure-Rust or easily bundled decoder is available.
 - Agent file transfer (drag-and-drop a file onto the window), richer clipboard (images).
 - Seamless and semi-seamless migration (`SPICE_MSG_MAIN_MIGRATE_*`).
 - Multiple monitors (one SDL window per display channel / monitor).
@@ -199,7 +199,7 @@ noisy.
 | LZ4 | `lz4_flex` (`safe-decode`) | SPICE uses LZ4 *streaming* blocks where each block's dictionary is the previous output (`canvas_base.c:canvas_get_lz4`); handle this with `block::decompress_into_with_dict`. |
 | zlib (ZLIB_GLZ_RGB) | `flate2` (`rust_backend` / miniz_oxide) | Pure Rust. |
 | Opus | `opus` 0.4 (→ `opusic-sys`, bundled libopus) | Behind a default cargo feature `opus`. Without it we simply don't advertise `PLAYBACK_CAP_OPUS` / `RECORD_CAP_OPUS` and the server sends raw PCM. |
-| H.264 (later) | `openh264` 0.9 with `source` feature | Bundled C++ build via `cc`. Behind feature `h264`. |
+| H.264 | `ffmpeg-next` 9 (system libavcodec) | Behind feature `h264`, off by default. Not openh264: spice-server feeds x264 RGB, so its streams are High 4:4:4 Predictive, which openh264 (and the pure-Rust decoders) can't decode. YUV to xRGB is done in Rust, so no libswscale. |
 | Errors | `thiserror` (libs), `anyhow` (bin) | |
 | Bytes | `bytes` | Zero-copy message slices. |
 | Password prompt | `rpassword` | Cross-platform terminal prompt when the server rejects an empty password. |
@@ -209,7 +209,8 @@ Avoided on purpose: `pixman` bindings, `openssl`, `gstreamer`, anything GTK or
 GLib.
 
 **Toolchain additions for the devcontainer:** `cmake`, `pkg-config`, `g++`
-(for SDL, libopus and openh264 source builds). CI matrix:
+(for SDL and libopus source builds), plus the FFmpeg development files and
+`libclang-dev` for the `h264` feature. CI matrix:
 `ubuntu-latest`, `windows-latest` (MSVC), `macos-latest` (arm64), plus a
 cross-compile check for `x86_64-pc-windows-gnu`.
 
@@ -472,10 +473,10 @@ this. TLS (8) can move earlier if the target servers need it.
    (audio stream gain, `SDL_AudioStream` across threads, user events).
    Fallback: `sdl2` 0.38 with `bundled`. The frontend sits behind our own
    small trait boundary, so swapping is contained.
-3. **Build-time C dependencies:** SDL (cmake), libopus (cmake), and
-   openh264 (cc) later. All are bundled, but builders need cmake and a C
-   compiler. Document it, and keep `opus` and `h264` as features so a
-   minimal build needs only SDL.
+3. **Build-time C dependencies:** SDL (cmake) and libopus (cmake) are
+   bundled, so builders need cmake and a C compiler. H.264 uses the system
+   FFmpeg instead (linked dynamically; libclang for bindgen). Document it,
+   and keep `opus` and `h264` as features so a minimal build needs only SDL.
 4. **GLZ cross-image dependencies** make decoding order-sensitive across
    display channels. Get this right with a session-wide window and an async
    "wait for image id" with a timeout. Log `warn!` and drop the draw on

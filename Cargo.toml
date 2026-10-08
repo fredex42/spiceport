@@ -16,7 +16,7 @@ version = "0.1.0"
 edition = "2024"
 license = "LGPL-2.1-or-later"
 repository = "https://github.com/fredex42/spiceport"
-rust-version = "1.88"
+rust-version = "1.89"
 
 [workspace.dependencies]
 spice-proto = { path = "crates/spice-proto" }
@@ -41,6 +41,8 @@ zune-jpeg = "0.5"
 lz4_flex = { version = "0.14", default-features = false, features = ["safe-decode", "std"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 opus = "0.4"
+# `format` only because ffmpeg-next's codec module doesn't build without it.
+ffmpeg-next = { version = "9", default-features = false, features = ["codec", "format"] }
 clap = { version = "4", features = ["derive", "env"] }
 colog = "1.4"
 env_logger = "0.11"

@@ -50,6 +50,28 @@ jobs:
       - name: Smoke test
         run: cargo run -p spiceport -- --help
 
+  h264:
+    name: h264 feature (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install SDL and FFmpeg build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake pkg-config \
+            libasound2-dev libdbus-1-dev libegl-dev libgl-dev libpulse-dev libudev-dev \
+            libwayland-dev libx11-dev libxcursor-dev libxext-dev libxfixes-dev libxi-dev \
+            libxkbcommon-dev libxrandr-dev libxss-dev libxtst-dev wayland-protocols \
+            libavcodec-dev libavformat-dev libavutil-dev libclang-dev
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --features spiceport/h264 -- -D warnings
+      - name: Test
+        run: cargo test -p spice-decode -p spice-client -p spiceport --features spiceport/h264
+
   windows-gnu:
     name: cross-check x86_64-pc-windows-gnu
     runs-on: ubuntu-latest

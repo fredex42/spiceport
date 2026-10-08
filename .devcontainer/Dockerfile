@@ -33,6 +33,11 @@ RUN apt-get update \
         python3-venv \
         # spice-common's log.c needs glib for the C oracle (tests/c-oracle).
         libglib2.0-dev \
+        # The `h264` feature: FFmpeg's decoder, plus libclang for bindgen.
+        libavcodec-dev \
+        libavformat-dev \
+        libavutil-dev \
+        libclang-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/jdx/mise:latest /usr/local/bin/mise /usr/local/bin/mise
