@@ -6,13 +6,16 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 
+mod dist;
+
 fn main() -> anyhow::Result<()> {
     let cmd = std::env::args().nth(1);
     match cmd.as_deref() {
         Some("gen-keymap") => gen_keymap(),
+        Some("dist") => dist::dist(std::env::args().skip(2).collect()),
         _ => {
             eprintln!(
-                "usage: cargo xtask <command>\n\ncommands:\n  gen-keymap   regenerate spiceport/src/keymap_generated.rs from keycodemapdb"
+                "usage: cargo xtask <command>\n\ncommands:\n  gen-keymap   regenerate spiceport/src/keymap_generated.rs from keycodemapdb\n  dist [--target T] [--no-build]\n               build a release and package it into target/dist"
             );
             std::process::exit(2);
         }

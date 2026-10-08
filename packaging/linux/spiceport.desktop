@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=spiceport
+Comment=SPICE remote display client
+Exec=spiceport %u
+Icon=spiceport
+Terminal=false
+Categories=Network;RemoteAccess;
+MimeType=x-scheme-handler/spice;x-scheme-handler/spice+tls;

@@ -12,6 +12,65 @@ spiceport -v spice://localhost:5900
 
 See [PLAN.md](PLAN.md) for the design and milestones.
 
+## What works
+
+- Plain TCP, TLS (`spice+tls://`, `--ca-file`, `--host-subject`,
+  `--secure-channels`) and Unix sockets (not on Windows); SPICE ticket
+  passwords (from the URL, `--password-stdin`, `SPICE_PASSWORD`, or a prompt).
+- Display: every SPICE image compression (QUIC, LZ, GLZ, ZLIB_GLZ, LZ4,
+  JPEG, JPEG_ALPHA, bitmaps), every draw operation, and MJPEG video streams
+  synchronised to the audio clock.
+- Keyboard and mouse in both server (grabbed) and client (agent) mouse
+  modes, the guest cursor, lock-key synchronisation.
+- With spice-vdagent in the guest: the guest resolution follows the window,
+  and text copy/paste works both ways.
+- Audio playback and microphone recording, raw or Opus.
+
+Not yet: H.264/VP8/VP9 streams, file transfer, USB redirection, multiple
+monitors, smart cards, migration, SASL.
+
+## Installing
+
+Tagged releases on GitHub carry:
+
+| Platform | Artifacts |
+|---|---|
+| Linux | `.tar.gz` with the binary, and an `.AppImage` |
+| macOS | `spiceport.app` (zipped) and a bare-binary `.tar.gz` |
+| Windows | `.zip` with `spiceport.exe` |
+
+The binaries link SDL statically. On Linux they need only glibc; SDL
+loads X11/Wayland and ALSA/PulseAudio/PipeWire libraries at run time.
+
+On macOS run the app with a URL: `open -a spiceport --args spice://host:5900`,
+or `spiceport.app/Contents/MacOS/spiceport spice://host:5900`. The microphone
+permission prompt only appears when the guest starts recording. To grab
+system shortcuts (Cmd-Tab and so on) the terminal or app needs the
+Accessibility permission.
+
+## Using
+
+```
+spiceport [OPTIONS] <URL>
+
+spiceport spice://localhost:5900
+spiceport "spice://host?port=5900&tls-port=5901" --ca-file ca-cert.pem --secure-channels main
+spiceport spice+tls://host:5901 --ca-file ca-cert.pem --host-subject "C=GB,O=Example,CN=host"
+```
+
+Run `spiceport --help` for every option.
+
+| Keys (default `--release-keys`) | Action |
+|---|---|
+| Ctrl+Alt | Release the mouse/keyboard grab, or grab again |
+| Ctrl+Alt+End | Send Ctrl+Alt+Del to the guest |
+| Ctrl+Alt+Q | Quit |
+| Shift+F11 | Toggle fullscreen |
+
+Click in the window to grab the mouse when the guest has no agent (server
+mouse mode). Exit status is 0 on a clean disconnect, 1 on connection or
+authentication errors, and 2 for bad options or URLs.
+
 ## Building
 
 You need a Rust toolchain plus **cmake** and a **C compiler**: SDL3 (and libopus,
@@ -40,8 +99,43 @@ The devcontainer in `.devcontainer/` has all of this installed.
 | `crates/spice-canvas` | Surfaces, draw operations and caches |
 | `crates/spice-client` | tokio-based session and channels; no SDL |
 | `spiceport` | The binary: CLI, logging, SDL frontend |
-| `xtask` | `cargo xtask` helpers (keymap generation) |
+| `xtask` | `cargo xtask gen-keymap` and `cargo xtask dist` (packaging) |
+| `packaging` | macOS `Info.plist`/entitlements, Linux `.desktop`, icon |
+| `scripts` | Test servers: QEMU with SPICE, TLS certificates |
+| `tests/c-oracle` | spice-common's C encoders, for golden decoder tests |
+| `fuzz` | `cargo fuzz` targets for decoders and message parsing |
 | `spice-gtk`, `spice-protocol` | Reference C sources (git submodules); not built |
+
+## Testing
+
+`cargo test --workspace` runs the unit tests, property tests and, when a C
+compiler, glib and the `spice-gtk` submodule are available, golden tests that
+compare the decoders with spice-common's own encoders
+(`SPICEPORT_REQUIRE_ORACLE=1` makes a missing oracle an error, as on CI).
+
+For manual testing against a real server:
+
+```
+scripts/test-server.sh                          # QEMU on port 5900, no password
+scripts/test-server.sh --port 5910 --password secret --streaming all -- -cdrom some.iso
+scripts/gen-test-certs.sh /tmp/certs
+scripts/test-server.sh --tls-port 5901 --tls-dir /tmp/certs
+spiceport --ca-file /tmp/certs/ca-cert.pem spice+tls://localhost:5901
+```
+
+`cargo run -p spice-client --example screenshot -- spice://localhost:5900 out.ppm`
+captures the guest display without a window.
+
+## Releasing
+
+`cargo xtask dist [--target T]` builds a release binary and packages it for
+the host OS into `target/dist/` (an AppImage too, when `appimagetool` is on
+`PATH` or `APPIMAGETOOL` points at it). Pushing a `v*` tag runs
+`.github/workflows/release.yml`, which builds Linux (x86_64, aarch64),
+Windows (x86_64) and macOS (arm64, x86_64) and drafts a GitHub release.
+macOS builds are signed and notarised when these secrets are set:
+`MACOS_CERT_P12` (base64 .p12), `MACOS_CERT_PASSWORD`, `MACOS_SIGN_IDENTITY`,
+`APPLE_ID`, `APPLE_TEAM_ID` and `APPLE_APP_PASSWORD`.
 
 ## Logging
 
