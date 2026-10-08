@@ -75,3 +75,25 @@ jobs:
           for t in quic lz glz lz4 jpeg bitmap server_messages; do
             cargo fuzz run "$t" -- -max_total_time=30
           done
+
+  integration:
+    name: integration (QEMU)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-system-modules-spice
+      - name: Connect headless and capture a frame
+        run: |
+          scripts/test-server.sh --port 5900 > qemu.log 2>&1 &
+          sleep 5
+          cargo run -q -p spice-client --example screenshot -- spice://127.0.0.1:5900 shot.ppm 8
+          test "$(head -c 2 shot.ppm)" = P6
+          # Something other than black must have been drawn (SeaBIOS text).
+          test "$(tail -c +16 shot.ppm | tr -d '\000' | wc -c)" -gt 0
+      - if: failure()
+        run: cat qemu.log
