@@ -23,7 +23,11 @@ sha1.workspace = true
 rand.workspace = true
 rustls.workspace = true
 tokio-rustls.workspace = true
+rustls-pemfile.workspace = true
+rustls-native-certs.workspace = true
+x509-parser.workspace = true
 opus = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }

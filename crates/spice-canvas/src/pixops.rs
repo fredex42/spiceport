@@ -79,7 +79,9 @@ pub fn combine(o: u32, s: Argb, sa: Argb, d: Argb) -> Argb {
             op::XOR => (255 - da, 255 - sa[c]),
             op::ADD => (255, 255),
             op::SATURATE => {
-                let f = ((255 - da) * 255).checked_div(sa[0]).map_or(255, |f| f.min(255));
+                let f = ((255 - da) * 255)
+                    .checked_div(sa[0])
+                    .map_or(255, |f| f.min(255));
                 (f, 255)
             }
             _ => (255, 255 - sa[c]),

@@ -130,7 +130,7 @@ impl Channel {
                 );
                 let tcp = Transport::connect_tcp(host, port).await?;
                 if use_tls {
-                    crate::tls::connect(cfg, host, tcp).await?
+                    crate::tls::connect(session, host, tcp).await?
                 } else {
                     Transport::Tcp(tcp)
                 }

@@ -103,6 +103,8 @@ pub struct Shared {
     pub glz_window: Arc<spice_canvas::GlzWindow>,
     /// Audio playback latency in ms, `u32::MAX` while no playback is active.
     playback_delay: AtomicU32,
+    /// Built on first use and shared by every TLS channel.
+    tls: std::sync::OnceLock<std::result::Result<Arc<rustls::ClientConfig>, String>>,
 }
 
 impl Shared {
@@ -140,6 +142,13 @@ impl Shared {
             .unwrap()
             .as_ref()
             .map(|m| m.base.wrapping_add(m.at.elapsed().as_millis() as u32))
+    }
+
+    pub(crate) fn tls_config(&self) -> Result<Arc<rustls::ClientConfig>> {
+        self.tls
+            .get_or_init(|| crate::tls::client_config(&self.config.tls).map_err(|e| e.to_string()))
+            .clone()
+            .map_err(ClientError::Tls)
     }
 
     /// `spice_session_get_playback_latency`, or `None` when no playback
@@ -200,6 +209,7 @@ pub async fn run(
         serials: Mutex::new(HashMap::new()),
         glz_window: spice_canvas::GlzWindow::new(),
         playback_delay: AtomicU32::new(u32::MAX),
+        tls: std::sync::OnceLock::new(),
     });
 
     let main = Channel::open(&shared, channel_type::MAIN, 0, MainChannel::caps()).await?;
