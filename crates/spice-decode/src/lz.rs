@@ -306,7 +306,9 @@ impl Header {
 pub(crate) fn check_sizes(ty: LzType, width: u32, height: u32, stride: u32) -> Result<()> {
     if ty.is_plt() {
         let ppb = ty.plt_pixels_per_byte();
-        if stride > width / ppb && (width.is_multiple_of(ppb) || stride - width / ppb > 1) {
+        if stride < width.div_ceil(ppb)
+            || (stride > width / ppb && (width.is_multiple_of(ppb) || stride - width / ppb > 1))
+        {
             return Err(DecodeError::Corrupt("LZ (palette stride)"));
         }
     } else if stride as u64 != width as u64 * ty.rgb_bytes_per_pixel() as u64 {
@@ -472,6 +474,13 @@ mod tests {
         assert!(decode(&d, None).is_err());
         let d = header(LzType::Rgb32, 4, 1, 15, true);
         assert!(decode(&d, None).is_err());
+    }
+
+    #[test]
+    fn palette_stride_must_cover_width() {
+        let d = header(LzType::Plt1Be, 2, 10, 0, false);
+        assert!(decode(&d, Some(&[1, 2, 3])).is_err());
+        assert!(check_sizes(LzType::Plt1Be, 9, 1, 1).is_err());
     }
 
     /// JPEG_ALPHA = a JPEG plus an LZ XXXA alpha plane (`canvas_get_jpeg_alpha`).
