@@ -13,6 +13,10 @@ use std::sync::OnceLock;
 use spice_decode::image::rgb555_to_xrgb;
 use spice_decode::{lz, quic};
 
+fn oracle_required(value: Option<&std::ffi::OsStr>) -> bool {
+    value == Some(std::ffi::OsStr::new("1"))
+}
+
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -33,7 +37,7 @@ fn oracle() -> Option<&'static Path> {
             if ok {
                 Some(out)
             } else {
-                if std::env::var_os("SPICEPORT_REQUIRE_ORACLE").is_some() {
+                if oracle_required(std::env::var_os("SPICEPORT_REQUIRE_ORACLE").as_deref()) {
                     panic!("C oracle could not be built");
                 }
                 eprintln!("skipping C oracle tests: could not build tests/c-oracle");
@@ -41,6 +45,14 @@ fn oracle() -> Option<&'static Path> {
             }
         })
         .as_deref()
+}
+
+#[test]
+fn oracle_is_only_required_when_explicitly_enabled() {
+    assert!(!oracle_required(None));
+    assert!(!oracle_required(Some(std::ffi::OsStr::new(""))));
+    assert!(!oracle_required(Some(std::ffi::OsStr::new("true"))));
+    assert!(oracle_required(Some(std::ffi::OsStr::new("1"))));
 }
 
 /// Deterministic xorshift so failures reproduce.
