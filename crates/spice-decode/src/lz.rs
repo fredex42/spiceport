@@ -315,6 +315,9 @@ pub(crate) fn check_sizes(ty: LzType, width: u32, height: u32, stride: u32) -> R
         return Err(DecodeError::Corrupt("LZ (stride)"));
     }
     if stride as u64 * height as u64 > MAX_IMAGE_SIZE
+        || (ty.is_plt()
+            && stride as u64 * ty.plt_pixels_per_byte() as u64 * height as u64
+                > crate::image::MAX_PIXELS)
         || width as u64 * height as u64 > crate::image::MAX_PIXELS
     {
         return Err(DecodeError::TooLarge { width, height });
@@ -481,6 +484,12 @@ mod tests {
         let d = header(LzType::Plt1Be, 2, 10, 0, false);
         assert!(decode(&d, Some(&[1, 2, 3])).is_err());
         assert!(check_sizes(LzType::Plt1Be, 9, 1, 1).is_err());
+    }
+
+    #[test]
+    fn palette_padding_cannot_exceed_pixel_limit() {
+        let height = (crate::image::MAX_PIXELS / 8 + 1) as u32;
+        assert!(check_sizes(LzType::Plt1Be, 1, height, 1).is_err());
     }
 
     /// JPEG_ALPHA = a JPEG plus an LZ XXXA alpha plane (`canvas_get_jpeg_alpha`).
