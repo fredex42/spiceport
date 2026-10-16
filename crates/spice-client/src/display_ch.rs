@@ -15,7 +15,7 @@ use spice_proto::{chan_log, warn_once_per};
 use crate::channel::{Channel, Message};
 use crate::error::Result;
 use crate::events::ClientEvent;
-use crate::video::{self, Frame, Stream};
+use crate::video::{self, Codec, Frame, FrameData, Stream};
 
 /// `IMAGES_CACHE_SIZE_DEFAULT` in spice-session.c (bytes).
 const IMAGES_CACHE_SIZE: i64 = 1024 * 1024 * 80;
@@ -32,8 +32,8 @@ pub struct DisplayChannel {
 }
 
 impl DisplayChannel {
-    /// `spice_display_channel_set_capabilities`. MJPEG is the only
-    /// video codec for now (H.264 is a later phase).
+    /// `spice_display_channel_set_capabilities`. MJPEG always; H.264 with
+    /// the `h264` feature.
     pub fn caps() -> Caps {
         let mut c = Caps::new()
             .with(caps::display::SIZED_STREAM)
@@ -43,6 +43,8 @@ impl DisplayChannel {
             .with(caps::display::LZ4_COMPRESSION)
             .with(caps::display::MULTI_CODEC)
             .with(caps::display::CODEC_MJPEG);
+        #[cfg(feature = "h264")]
+        c.set(caps::display::CODEC_H264);
         if std::env::var_os("SPICE_DISABLE_ADAPTIVE_STREAMING").is_none() {
             c.set(caps::display::STREAM_REPORT);
         }
@@ -82,6 +84,16 @@ impl DisplayChannel {
                 chan_log!(info, self, "server can't change the preferred compression");
             }
         }
+        let codecs = &self.ch.session.config.preferred_video_codecs;
+        if !codecs.is_empty() {
+            // `spice_display_channel_change_preferred_video_codec_types`
+            if self.ch.remote_has_cap(caps::display::PREF_VIDEO_CODEC_TYPE) {
+                chan_log!(debug, self, "preferred video codecs: {codecs:?}");
+                self.ch.tx.send(&d::PreferredVideoCodecType(codecs.clone()));
+            } else {
+                chan_log!(info, self, "server can't change the preferred video codec");
+            }
+        }
     }
 
     pub async fn run(mut self) -> Result<()> {
@@ -112,7 +124,8 @@ impl DisplayChannel {
             .map(|ms| Duration::from_millis(ms as u64))
     }
 
-    /// `mjpeg_decoder_decode_frame` for every stream with a frame due.
+    /// `mjpeg_decoder_decode_frame` / `display_frame` for every stream
+    /// with a frame due.
     fn show_due_frames(&mut self) {
         let now = self.ch.session.mm_time();
         let ids: Vec<u32> = self.streams.keys().copied().collect();
@@ -120,21 +133,49 @@ impl DisplayChannel {
             while let Some(frame) = self.streams.get_mut(&id).and_then(|s| s.take_due(now)) {
                 let st = &self.streams[&id];
                 let (surface, flags, clip) = (st.surface_id, st.flags, st.clip.clone());
-                match spice_decode::jpeg::decode(&frame.data) {
-                    Ok(img) => {
-                        let top_down = flags & spice_proto::enums::stream_flags::TOP_DOWN != 0;
-                        if let Err(e) = self.canvas.put_image(
-                            surface,
-                            frame.dest,
-                            &img,
-                            clip.as_ref(),
-                            top_down,
-                        ) {
-                            warn!("{}: stream {id}: {e}", self.name);
+                let decoded;
+                let img = match &frame.data {
+                    #[cfg(feature = "h264")]
+                    FrameData::Decoded(img) => img,
+                    FrameData::Jpeg(data) => match spice_decode::jpeg::decode(data) {
+                        Ok(img) => {
+                            decoded = img;
+                            &decoded
                         }
-                    }
-                    Err(e) => warn!("{}: stream {id}: bad MJPEG frame: {e}", self.name),
+                        Err(e) => {
+                            warn!("{}: stream {id}: bad MJPEG frame: {e}", self.name);
+                            continue;
+                        }
+                    },
+                };
+                let top_down = flags & spice_proto::enums::stream_flags::TOP_DOWN != 0;
+                if let Err(e) =
+                    self.canvas
+                        .put_image(surface, frame.dest, img, clip.as_ref(), top_down)
+                {
+                    warn!("{}: stream {id}: {e}", self.name);
                 }
+            }
+        }
+    }
+
+    /// `create_video_decoder` for a `STREAM_CREATE`; `None` (after a
+    /// warning) when the codec can't be decoded.
+    fn new_codec(&self, id: u32, codec_type: u8) -> Option<Codec> {
+        use spice_proto::enums::video_codec;
+        match codec_type {
+            video_codec::MJPEG => Some(Codec::Mjpeg),
+            #[cfg(feature = "h264")]
+            video_codec::H264 => match spice_decode::h264::H264Decoder::new() {
+                Ok(dec) => Some(Codec::H264(Box::new(dec))),
+                Err(e) => {
+                    warn!("{}: stream {id}: {e}", self.name);
+                    None
+                }
+            },
+            other => {
+                warn!("{}: stream {id}: codec {other} is not supported", self.name);
+                None
             }
         }
     }
@@ -169,14 +210,34 @@ impl DisplayChannel {
         }
         let margin = now.map_or(0, |n| video::mm_diff(mm, n));
         let dest = data.sized.map_or(st.dest, |(_, _, r)| r);
-        st.queue_frame(
-            Frame {
-                mm_time: mm,
-                dest,
-                data: body.slice_ref(data.data),
+        let frame_data = match &mut st.codec {
+            Codec::Mjpeg => Some(FrameData::Jpeg(body.slice_ref(data.data))),
+            #[cfg(feature = "h264")]
+            Codec::H264(dec) => match dec.decode(data.data) {
+                Ok(img) => img.map(FrameData::Decoded),
+                Err(e) => {
+                    // libavcodec conceals errors and later frames (with
+                    // intra refresh) repair the picture, so one bad frame
+                    // doesn't end the stream.
+                    if st.decode_errors == 0 {
+                        warn!("{}: stream {id}: {e}", self.name);
+                    }
+                    st.decode_errors += 1;
+                    st.frames_dropped += 1;
+                    None
+                }
             },
-            now,
-        );
+        };
+        if let Some(frame_data) = frame_data {
+            st.queue_frame(
+                Frame {
+                    mm_time: mm,
+                    dest,
+                    data: frame_data,
+                },
+                now,
+            );
+        }
         if let Some(report) = st.update_report(id, mm, margin, audio_delay) {
             chan_log!(
                 debug,
@@ -323,18 +384,17 @@ impl DisplayChannel {
                     c.src_height,
                     c.dest
                 );
-                if c.codec_type != spice_proto::enums::video_codec::MJPEG {
-                    warn!(
-                        "{}: stream codec {} is not supported",
-                        self.name, c.codec_type
-                    );
-                    self.report_invalid_stream(c.id);
-                } else {
-                    if self.streams.contains_key(&c.id) {
-                        warn!("{}: stream {} created twice", self.name, c.id);
+                match self.new_codec(c.id, c.codec_type) {
+                    None => self.report_invalid_stream(c.id),
+                    Some(codec) => {
+                        if self.streams.contains_key(&c.id) {
+                            warn!("{}: stream {} created twice", self.name, c.id);
+                        }
+                        self.streams.insert(
+                            c.id,
+                            Stream::new(codec, c.surface_id, c.flags, c.dest, &c.clip),
+                        );
                     }
-                    self.streams
-                        .insert(c.id, Stream::new(c.surface_id, c.flags, c.dest, &c.clip));
                 }
             }
             msg::display::STREAM_DATA | msg::display::STREAM_DATA_SIZED => {
@@ -356,9 +416,10 @@ impl DisplayChannel {
                     chan_log!(
                         debug,
                         self,
-                        "stream {id} destroyed: {} frames shown, {} dropped",
+                        "stream {id} destroyed: {} frames shown, {} dropped, {} decode errors",
                         st.frames_shown,
-                        st.frames_dropped
+                        st.frames_dropped,
+                        st.decode_errors
                     );
                 }
             }

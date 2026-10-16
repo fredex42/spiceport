@@ -27,6 +27,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     cfg.preferred_compression = std::env::var("SPICE_COMPRESSION")
         .ok()
         .and_then(|v| v.parse().ok());
+    // SPICE_VIDEO_CODECS=<SpiceVideoCodecType numbers>, e.g. "3,1" for
+    // H.264 then MJPEG (H.264 needs the `h264` feature).
+    cfg.preferred_video_codecs = std::env::var("SPICE_VIDEO_CODECS")
+        .map(|v| v.split(',').filter_map(|c| c.trim().parse().ok()).collect())
+        .unwrap_or_default();
     let primary: Arc<Mutex<Option<SharedSurface>>> = Arc::default();
     let p2 = primary.clone();
     let sink = Arc::new(move |ev: ClientEvent| match ev {
@@ -67,12 +72,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Print `warn!`+ to stderr without pulling a logger into the library.
+/// Print `info!`+ (`debug!`+ with SPICE_DEBUG set) to stderr without
+/// pulling a logger into the library.
 fn env_logger_lite() -> Result<(), log::SetLoggerError> {
     struct L;
     impl log::Log for L {
         fn enabled(&self, m: &log::Metadata) -> bool {
-            m.level() <= log::Level::Info
+            m.level() <= log::max_level()
         }
         fn log(&self, r: &log::Record) {
             if self.enabled(r.metadata()) {
@@ -81,5 +87,10 @@ fn env_logger_lite() -> Result<(), log::SetLoggerError> {
         }
         fn flush(&self) {}
     }
-    log::set_logger(&L).map(|()| log::set_max_level(log::LevelFilter::Info))
+    let level = if std::env::var_os("SPICE_DEBUG").is_some() {
+        log::LevelFilter::Debug
+    } else {
+        log::LevelFilter::Info
+    };
+    log::set_logger(&L).map(|()| log::set_max_level(level))
 }

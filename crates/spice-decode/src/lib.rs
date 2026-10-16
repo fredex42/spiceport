@@ -7,6 +7,8 @@
 
 pub mod bitmap;
 pub mod glz;
+#[cfg(feature = "h264")]
+pub mod h264;
 pub mod image;
 pub mod jpeg;
 pub mod lz;

@@ -83,6 +83,12 @@ fn session_config(cli: &cli::Cli) -> anyhow::Result<SessionConfig> {
     }
     cfg.secure_channels = cli.secure_channels.clone();
     cfg.preferred_compression = cli.preferred_compression.map(cli::Compression::wire);
+    for c in &cli.preferred_video_codec {
+        if !c.supported() {
+            bail!("this build can't decode {c:?} video; rebuild with `--features h264`");
+        }
+    }
+    cfg.preferred_video_codecs = cli.preferred_video_codec.iter().map(|c| c.wire()).collect();
     cfg.enable_audio = !cli.no_audio;
     cfg.enable_record = !cli.no_record;
     cfg.agent_resize = !cli.no_agent_resize;

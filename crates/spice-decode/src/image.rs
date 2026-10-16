@@ -119,6 +119,8 @@ pub enum DecodeError {
     Corrupt(&'static str),
     #[error("JPEG: {0}")]
     Jpeg(String),
+    #[error("H.264: {0}")]
+    H264(String),
     #[error("missing palette")]
     NoPalette,
 }

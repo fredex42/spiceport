@@ -1,7 +1,8 @@
 //! Video streams on the display channel (`channel-display.c` stream
-//! handling and `channel-display-mjpeg.c`): frames are queued and shown at
-//! their multimedia time, late ones are dropped, and stream reports tell
-//! the server how playback is going so it can adapt the bitrate.
+//! handling, `channel-display-mjpeg.c` and, for H.264, the scheduling in
+//! `channel-display-gst.c`): frames are queued and shown at their
+//! multimedia time, late ones are dropped, and stream reports tell the
+//! server how playback is going so it can adapt the bitrate.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -15,11 +16,35 @@ use spice_proto::msg::display::{Clip, Rect, StreamReport};
 const DROP_SEQ_LEN_LIMIT: u32 = 3;
 
 #[derive(Debug, Clone)]
+pub enum FrameData {
+    /// An MJPEG frame, decoded when it is shown.
+    Jpeg(Bytes),
+    /// A frame from a codec with inter-frame references (H.264), decoded
+    /// on arrival because every frame must go through the decoder in order.
+    #[cfg(feature = "h264")]
+    Decoded(spice_decode::Image),
+}
+
+#[derive(Debug, Clone)]
 pub struct Frame {
     pub mm_time: u32,
     pub dest: Rect,
-    /// The compressed frame (a JPEG for MJPEG streams).
-    pub data: Bytes,
+    pub data: FrameData,
+}
+
+/// A stream's decoder state.
+pub enum Codec {
+    Mjpeg,
+    #[cfg(feature = "h264")]
+    H264(Box<spice_decode::h264::H264Decoder>),
+}
+
+impl Codec {
+    /// Whether late frames can be dropped before decoding. MJPEG frames
+    /// stand alone; H.264 frames are references for later ones.
+    fn independent_frames(&self) -> bool {
+        matches!(self, Codec::Mjpeg)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -35,6 +60,7 @@ struct Report {
 }
 
 pub struct Stream {
+    pub codec: Codec,
     pub surface_id: u32,
     pub flags: u8,
     pub dest: Rect,
@@ -45,6 +71,7 @@ pub struct Stream {
     report: Option<Report>,
     pub frames_shown: u64,
     pub frames_dropped: u64,
+    pub decode_errors: u64,
 }
 
 /// `spice_mmtime_diff`: wrapping difference of two mm times.
@@ -60,8 +87,9 @@ pub fn clip_region(clip: &Clip) -> Option<Region> {
 }
 
 impl Stream {
-    pub fn new(surface_id: u32, flags: u8, dest: Rect, clip: &Clip) -> Self {
+    pub fn new(codec: Codec, surface_id: u32, flags: u8, dest: Rect, clip: &Clip) -> Self {
         Self {
+            codec,
             surface_id,
             flags,
             dest,
@@ -71,11 +99,13 @@ impl Stream {
             report: None,
             frames_shown: 0,
             frames_dropped: 0,
+            decode_errors: 0,
         }
     }
 
-    /// `mjpeg_decoder_queue_frame`. `now` is the current mm time (`None`
-    /// before the server sent one, in which case frames show immediately).
+    /// `mjpeg_decoder_queue_frame` / `spice_gst_decoder_queue_frame`.
+    /// `now` is the current mm time (`None` before the server sent one, in
+    /// which case frames show immediately).
     pub fn queue_frame(&mut self, frame: Frame, now: Option<u32>) {
         if let Some(last) = self.queue.back()
             && mm_diff(frame.mm_time, last.mm_time) < 0
@@ -86,6 +116,7 @@ impl Stream {
         }
         if let Some(now) = now
             && mm_diff(frame.mm_time, now) < 0
+            && self.codec.independent_frames()
         {
             // Late MJPEG frames don't affect later ones; drop early.
             self.frames_dropped += 1;
@@ -96,13 +127,21 @@ impl Stream {
     }
 
     /// `mjpeg_decoder_schedule`: pick the next frame that isn't late.
+    /// For H.264 (`schedule_frame` in channel-display-gst.c) the newest
+    /// frame is shown even when late, so the video doesn't freeze while
+    /// the decoder can't keep up.
     pub fn schedule(&mut self, now: Option<u32>) {
         if self.scheduled.is_some() {
             return;
         }
+        let show_last = !self.codec.independent_frames();
         while let Some(f) = self.queue.pop_front() {
             match now {
-                Some(now) if mm_diff(now, f.mm_time) > 0 => self.frames_dropped += 1,
+                Some(now)
+                    if mm_diff(now, f.mm_time) > 0 && !(show_last && self.queue.is_empty()) =>
+                {
+                    self.frames_dropped += 1
+                }
                 _ => {
                     self.scheduled = Some(f);
                     return;
@@ -213,12 +252,12 @@ mod tests {
         Frame {
             mm_time: t,
             dest: Rect::new(0, 0, 1, 1),
-            data: Bytes::new(),
+            data: FrameData::Jpeg(Bytes::new()),
         }
     }
 
     fn stream() -> Stream {
-        Stream::new(0, 0, Rect::new(0, 0, 1, 1), &Clip::None)
+        Stream::new(Codec::Mjpeg, 0, 0, Rect::new(0, 0, 1, 1), &Clip::None)
     }
 
     #[test]
@@ -244,6 +283,36 @@ mod tests {
         s.take_due(Some(215));
         assert_eq!(s.due_in(Some(215)), None);
         assert_eq!(s.frames_dropped, 2);
+    }
+
+    #[cfg(feature = "h264")]
+    #[test]
+    fn h264_keeps_late_frames_until_newer_ones_arrive() {
+        let dec = spice_decode::h264::H264Decoder::new().unwrap();
+        let mut s = Stream::new(
+            Codec::H264(Box::new(dec)),
+            0,
+            0,
+            Rect::new(0, 0, 1, 1),
+            &Clip::None,
+        );
+        // Already late on arrival, but it's all there is: shown.
+        s.queue_frame(frame(40), Some(50));
+        assert_eq!(s.frames_dropped, 0);
+        assert_eq!(s.take_due(Some(50)).unwrap().mm_time, 40);
+        // Two late frames: only the newest is shown.
+        s.queue_frame(frame(60), Some(100));
+        s.queue_frame(frame(70), Some(100));
+        assert_eq!(
+            s.take_due(Some(100)).unwrap().mm_time,
+            60,
+            "scheduled first"
+        );
+        s.queue_frame(frame(80), Some(100));
+        s.queue_frame(frame(90), Some(100));
+        assert_eq!(s.take_due(Some(100)).unwrap().mm_time, 70);
+        assert_eq!(s.take_due(Some(100)).unwrap().mm_time, 90);
+        assert_eq!(s.frames_dropped, 1);
     }
 
     #[test]

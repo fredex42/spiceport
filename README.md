@@ -19,14 +19,15 @@ See [PLAN.md](PLAN.md) for the design and milestones.
   passwords (from the URL, `--password-stdin`, `SPICE_PASSWORD`, or a prompt).
 - Display: every SPICE image compression (QUIC, LZ, GLZ, ZLIB_GLZ, LZ4,
   JPEG, JPEG_ALPHA, bitmaps), every draw operation, and MJPEG video streams
-  synchronised to the audio clock.
+  synchronised to the audio clock. H.264 streams with the optional `h264`
+  feature (see below).
 - Keyboard and mouse in both server (grabbed) and client (agent) mouse
   modes, the guest cursor, lock-key synchronisation.
 - With spice-vdagent in the guest: the guest resolution follows the window,
   and text copy/paste works both ways.
 - Audio playback and microphone recording, raw or Opus.
 
-Not yet: H.264/VP8/VP9 streams, file transfer, USB redirection, multiple
+Not yet: VP8/VP9/H.265 streams, file transfer, USB redirection, multiple
 monitors, smart cards, migration, SASL.
 
 ## Installing
@@ -90,6 +91,26 @@ cargo build --release
 
 The devcontainer in `.devcontainer/` has all of this installed.
 
+### H.264 video streams
+
+`cargo build --release --features h264` adds H.264 stream decoding through the
+system FFmpeg's libavcodec. It is off by default because it links FFmpeg
+dynamically (libavcodec, libavformat and libavutil, FFmpeg 3.4 or later) and
+needs their development files and libclang to build:
+
+```
+sudo apt-get install libavcodec-dev libavformat-dev libavutil-dev libclang-dev
+```
+
+FFmpeg rather than openh264 because spice-server encodes the guest's RGB
+surface with x264 at 4:4:4 (High 4:4:4 Predictive), which openh264 can't
+decode. Distribute such builds under LGPL terms only with an FFmpeg built
+without `--enable-gpl`.
+
+spice-server picks MJPEG unless the client prefers otherwise, so ask for H.264
+with `--preferred-video-codec h264,mjpeg`. The server needs GStreamer's
+`x264enc` (gstreamer1.0-plugins-ugly on Debian/Ubuntu).
+
 ## Layout
 
 | Path | Contents |
@@ -124,7 +145,9 @@ spiceport --ca-file /tmp/certs/ca-cert.pem spice+tls://localhost:5901
 ```
 
 `cargo run -p spice-client --example screenshot -- spice://localhost:5900 out.ppm`
-captures the guest display without a window.
+captures the guest display without a window. `SPICE_VIDEO_CODECS=3,1` (with
+`--features h264`) makes it prefer H.264 streams, and `SPICE_DEBUG=1` adds
+debug logging.
 
 ## Releasing
 

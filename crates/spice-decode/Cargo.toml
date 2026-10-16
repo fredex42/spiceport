@@ -6,12 +6,19 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+# H.264 video streams through the system FFmpeg's libavcodec (needs the
+# libavcodec/libavformat/libavutil development files and libclang to build).
+h264 = ["dep:ffmpeg-next"]
+
 [dependencies]
 log.workspace = true
 thiserror.workspace = true
 lz4_flex.workspace = true
 zune-jpeg.workspace = true
 flate2.workspace = true
+ffmpeg-next = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest.workspace = true

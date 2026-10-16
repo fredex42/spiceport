@@ -42,6 +42,9 @@ pub struct SessionConfig {
     pub secure_channels: Vec<String>,
     /// `SpiceImageCompression` to request, if any.
     pub preferred_compression: Option<u8>,
+    /// `SpiceVideoCodecType`s to ask the server for, most preferred first;
+    /// empty leaves the choice to the server.
+    pub preferred_video_codecs: Vec<u8>,
     pub enable_audio: bool,
     pub enable_record: bool,
     /// Resize the guest to follow the window (needs the agent).
@@ -58,6 +61,7 @@ impl std::fmt::Debug for SessionConfig {
             .field("tls", &self.tls)
             .field("secure_channels", &self.secure_channels)
             .field("preferred_compression", &self.preferred_compression)
+            .field("preferred_video_codecs", &self.preferred_video_codecs)
             .finish_non_exhaustive()
     }
 }
@@ -71,6 +75,7 @@ impl SessionConfig {
             tls: TlsOptions::default(),
             secure_channels: Vec::new(),
             preferred_compression: None,
+            preferred_video_codecs: Vec::new(),
             enable_audio: true,
             enable_record: true,
             agent_resize: true,
